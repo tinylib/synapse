@@ -8,8 +8,7 @@ import (
 )
 
 var (
-	badParams  = errors.New("bad parameters")
-	notPending = errors.New("not pending")
+	badParams = errors.New("bad parameters")
 )
 
 // clientCodec is the single-connection

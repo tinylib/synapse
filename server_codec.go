@@ -43,7 +43,7 @@ func writeRes(w io.Writer, hdr *rpc.Response, body io.WriterTo) (err error) {
 	if err != nil {
 		return
 	}
-	_, err = en.WriteUint64(hdr.ServiceMethod)
+	_, err = en.WriteUint64(hdr.Seq)
 	if err != nil {
 		return
 	}

@@ -27,6 +27,14 @@ func (s *serverCodec) ReadRequestBody(x interface{}) error {
 	return err
 }
 
+func (s *serverCodec) WriteResponse(r *rpc.Response, body interface{}) error {
+	wt, ok := body.(io.WriterTo)
+	if !ok {
+		return badParams
+	}
+	return writeRes(s.conn, r, wt)
+}
+
 func readReq(r io.Reader, req *rpc.Request) (err error) {
 	dc := enc.NewDecoder(r)
 	req.ServiceMethod, _, err = dc.ReadString()

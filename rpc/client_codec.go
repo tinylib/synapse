@@ -11,6 +11,10 @@ var (
 	badParams = errors.New("bad parameters")
 )
 
+func NewClientCodec(c io.ReadWriteCloser) rpc.ClientCodec {
+	return &clientCodec{conn: c}
+}
+
 // clientCodec is the single-connection
 // implementation of rpc.ClientCodec
 type clientCodec struct {

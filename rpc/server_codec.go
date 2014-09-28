@@ -6,6 +6,10 @@ import (
 	"net/rpc"
 )
 
+func NewServerCode(c io.ReadWriteCloser) rpc.ServerCodec {
+	return &serverCodec{conn: c}
+}
+
 type serverCodec struct {
 	conn io.ReadWriteCloser
 }

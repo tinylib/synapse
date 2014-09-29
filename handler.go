@@ -2,7 +2,6 @@ package synapse
 
 import (
 	"github.com/philhofer/msgp/enc"
-	"io"
 )
 
 // Handler is the interface that

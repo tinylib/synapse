@@ -28,7 +28,7 @@ func (m *mux) Register(name string, handler Handler) {
 func (m *mux) ServeCall(req Request, res ResponseWriter) {
 	h, ok := m.hlrs[req.Name()]
 	if !ok {
-		res.Deny(NotFound)
+		res.WriteHeader(NotFound)
 	}
 	h.ServeCall(req, res)
 }

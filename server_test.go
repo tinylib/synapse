@@ -18,7 +18,9 @@ func (s *testString) DecodeMsg(r io.Reader) (int, error) {
 	var err error
 	var n int
 	var ss string
-	ss, n, err = enc.NewDecoder(r).ReadString()
+	dec := enc.NewDecoder(r)
+	ss, n, err = dec.ReadString()
+	enc.Done(dec)
 	*s = testString(ss)
 	return n, err
 }
@@ -109,5 +111,5 @@ func BenchmarkEcho(b *testing.B) {
 			b.Fatal(err)
 		}
 	}
-	b.StopTimer()
+	b.StopTimer() // b/c we run expensive defers
 }

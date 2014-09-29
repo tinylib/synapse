@@ -26,7 +26,7 @@ func (c *clientCodec) Close() error {
 }
 
 func (c *clientCodec) WriteRequest(r *rpc.Request, param interface{}) error {
-	wr, ok := param.(io.WriterTo)
+	wr, ok := param.(enc.MsgEncoder)
 	if !ok {
 		return badParams
 	}
@@ -46,7 +46,7 @@ func (c *clientCodec) ReadResponseBody(x interface{}) error {
 	return err
 }
 
-func writeReq(w io.Writer, r *rpc.Request, wrt io.WriterTo) (err error) {
+func writeReq(w io.Writer, r *rpc.Request, wrt enc.MsgEncoder) (err error) {
 	en := enc.NewEncoder(w)
 	_, err = en.WriteString(r.ServiceMethod)
 	if err != nil {

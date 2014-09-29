@@ -33,14 +33,16 @@ func newclient(rw io.ReadWriteCloser) *clientconn {
 	c := &clientconn{
 		conn: rw,
 	}
+	c.lr = io.LimitedReader{R: c.conn, N: 0}
 	c.en = enc.NewEncoder(&c.buf)
-	c.dc = enc.NewDecoder(&c.buf)
+	c.dc = enc.NewDecoder(&c.lr)
 	return c
 }
 
 type clientconn struct {
 	conn    io.ReadWriteCloser
 	buf     bytes.Buffer
+	lr      io.LimitedReader
 	scratch [4]byte
 	en      *enc.MsgWriter
 	dc      *enc.MsgReader
@@ -52,6 +54,9 @@ func (c *clientconn) Close() error {
 
 func (c *clientconn) Call(name string, in enc.MsgEncoder, out enc.MsgDecoder) error {
 	c.buf.Reset()
+	// save 4 leading bytes
+	// in the buffer for size
+	c.buf.Write(c.scratch[:])
 
 	// write message to buffer
 	c.en.WriteString(name)
@@ -61,16 +66,11 @@ func (c *clientconn) Call(name string, in enc.MsgEncoder, out enc.MsgDecoder) er
 		c.en.WriteMapHeader(0)
 	}
 
-	// write leading size
+	// write body
 	isz := c.buf.Len()
-	binary.BigEndian.PutUint32(c.scratch[:], uint32(isz))
-	_, err := c.conn.Write(c.scratch[:])
-	if err != nil {
-		c.conn.Close()
-		return err
-	}
-	// write request body from buffer
-	_, err = c.conn.Write(c.buf.Bytes())
+	bts := c.buf.Bytes()
+	binary.BigEndian.PutUint32(bts, uint32(isz))
+	_, err := c.conn.Write(bts)
 	if err != nil {
 		c.conn.Close()
 		return err
@@ -89,25 +89,20 @@ func (c *clientconn) Call(name string, in enc.MsgEncoder, out enc.MsgDecoder) er
 	if osz == 0 {
 		return statusErr(ServerError)
 	}
-	// read response body into buffer
-	_, err = io.CopyN(&c.buf, c.conn, int64(osz))
-	if err != nil {
-		c.conn.Close()
-		return err
-	}
+	c.lr.N = int64(osz)
+
 	// read status code
 	var code int
-	var nr int
-	code, nr, err = c.dc.ReadInt()
+	code, _, err = c.dc.ReadInt()
 	if err != nil {
 		c.conn.Close()
 		return err
 	}
 	status := Status(code)
-	left := int64(osz) - int64(nr)
 	if status != OK {
-		if left > 0 {
-			_, err = io.CopyN(ioutil.Discard, c.conn, left)
+		if c.lr.N > 0 {
+			// empty the reader
+			_, err = io.Copy(ioutil.Discard, &c.lr)
 			if err != nil {
 				c.conn.Close()
 				return err

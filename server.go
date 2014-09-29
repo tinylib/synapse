@@ -22,31 +22,33 @@ func serveListener(l net.Listener, h Handler) {
 
 func serveConn(c net.Conn, h Handler) {
 	rd := bufio.NewReader(c)
-	wr := bufio.NewWriter(c)
 
 	var outbuf bytes.Buffer // output buffer; we have to know size in advance
 
 	var lead [4]byte // for msg size
 	var sz uint32    // ""
-	var req request
-	var res response
+	var req request  // for handler request
+	var res response // for handler response
 
 	req.addr = c.RemoteAddr().String()
 	res.en = enc.NewEncoder(&outbuf)
 
 	// this is the limited reader that
-	// the req.decoder uses
+	// the req.decoder uses; we change
+	// N before every handler call
 	lr := io.LimitedReader{R: rd, N: 0}
 	req.dc = enc.NewDecoder(&lr)
 
 	// Loop:
 	//  - read big-endian uint32 msg size
-	//  - copy (sz) bytes into 'inbuf'
+	//  - set limit on limit reader for req
 	//  - call handler
 	//  - handler writes response to 'outbuf'
-	//  - write response length; copy buffer to conn
+	//  - write response length to head of buffer; write to conn
 	for {
 		outbuf.Reset()
+		// save 4 bytes at the front of the buffer
+		outbuf.Write(lead[:])
 
 		// reset response state
 		res.wrote = false
@@ -76,25 +78,21 @@ func serveConn(c net.Conn, h Handler) {
 		h.ServeCall(&req, &res)
 
 		// in case response
-		// wasn't written
+		// wasn't written by
+		// the hanlder
 		if !res.wrote {
 			res.WriteHeader(OK)
 			res.Send(nil)
 		}
 
+		// this is a little gross; we
+		// massage the first 4 bytes of the
+		// buffer by hand. but, this way
+		// we do exactly one write every time
 		ol := outbuf.Len()
-		binary.BigEndian.PutUint32(lead[:], uint32(ol))
-		_, err = wr.Write(lead[:])
-		if err != nil {
-			c.Close()
-			break
-		}
-		_, err = wr.Write(outbuf.Bytes())
-		if err != nil {
-			c.Close()
-			break
-		}
-		err = wr.Flush()
+		bts := outbuf.Bytes()
+		binary.BigEndian.PutUint32(bts, uint32(ol))
+		_, err = c.Write(bts)
 		if err != nil {
 			c.Close()
 			break

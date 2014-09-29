@@ -23,16 +23,16 @@ func (s *serverCodec) ReadRequestHeader(r *rpc.Request) error {
 }
 
 func (s *serverCodec) ReadRequestBody(x interface{}) error {
-	rd, ok := x.(io.ReaderFrom)
+	rd, ok := x.(enc.MsgDecoder)
 	if !ok {
 		return badParams
 	}
-	_, err := rd.ReadFrom(s.conn)
+	_, err := rd.DecodeMsg(s.conn)
 	return err
 }
 
 func (s *serverCodec) WriteResponse(r *rpc.Response, body interface{}) error {
-	wt, ok := body.(io.WriterTo)
+	wt, ok := body.(enc.MsgEncoder)
 	if !ok {
 		return badParams
 	}
@@ -49,7 +49,7 @@ func readReq(r io.Reader, req *rpc.Request) (err error) {
 	return
 }
 
-func writeRes(w io.Writer, hdr *rpc.Response, body io.WriterTo) (err error) {
+func writeRes(w io.Writer, hdr *rpc.Response, body enc.MsgEncoder) (err error) {
 	en := enc.NewEncoder(w)
 	_, err = en.WriteString(hdr.ServiceMethod)
 	if err != nil {

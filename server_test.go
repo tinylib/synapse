@@ -80,28 +80,29 @@ func BenchmarkEcho(b *testing.B) {
 		}
 	}()
 
-	conn, err := net.Dial("tcp", "localhost:7000")
-	if err != nil {
-		b.Fatal(err)
-	}
-	defer func() {
-		err := conn.Close()
-		if err != nil {
-			b.Error(err)
-		}
-	}()
-
-	cl := newclient(conn)
-
-	instr := testString("hello, world!")
-	var outstr testString
-
-	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		err := cl.Call("any", &instr, &outstr)
+	b.ReportAllocs()
+	b.SetParallelism(8)
+	b.RunParallel(func(pb *testing.PB) {
+		conn, err := net.Dial("tcp", "localhost:7000")
 		if err != nil {
-			b.Fatalf("Iter %d: %s", i, err)
+			b.Fatal(err)
 		}
-	}
+		defer func() {
+			err := conn.Close()
+			if err != nil {
+				b.Error(err)
+			}
+		}()
+		cl := newclient(conn)
+		instr := testString("hello, world!")
+		var outstr testString
+		for pb.Next() {
+			err := cl.Call("any", &instr, &outstr)
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+
 }

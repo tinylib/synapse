@@ -5,23 +5,23 @@ package synapse
 // DO NOT EDIT
 
 import (
+	"bytes"
 	"github.com/philhofer/msgp/enc"
 	"io"
-	"bytes"
 )
 
 func (z *Arg1) Marshal() ([]byte, error) {
 	var buf bytes.Buffer
-	_, err := z.WriteTo(&buf)
+	_, err := z.EncodeMsg(&buf)
 	return buf.Bytes(), err
 }
 
 func (z *Arg1) Unmarshal(b []byte) error {
-	_, err := z.ReadFrom(bytes.NewReader(b))
+	_, err := z.DecodeMsg(bytes.NewReader(b))
 	return err
 }
 
-func (z *Arg1) WriteTo(w io.Writer) (n int64, err error) {
+func (z *Arg1) EncodeMsg(w io.Writer) (n int64, err error) {
 	var nn int
 	en := enc.NewEncoder(w)
 	_ = nn
@@ -59,7 +59,7 @@ func (z *Arg1) WriteTo(w io.Writer) (n int64, err error) {
 	return
 }
 
-func (z *Arg1) ReadFrom(r io.Reader) (n int64, err error) {
+func (z *Arg1) DecodeMsg(r io.Reader) (n int64, err error) {
 	var sz uint32
 	var nn int
 	var field []byte
@@ -120,16 +120,16 @@ func (z *Arg1) ReadFrom(r io.Reader) (n int64, err error) {
 
 func (z *Arg2) Marshal() ([]byte, error) {
 	var buf bytes.Buffer
-	_, err := z.WriteTo(&buf)
+	_, err := z.EncodeMsg(&buf)
 	return buf.Bytes(), err
 }
 
 func (z *Arg2) Unmarshal(b []byte) error {
-	_, err := z.ReadFrom(bytes.NewReader(b))
+	_, err := z.DecodeMsg(bytes.NewReader(b))
 	return err
 }
 
-func (z *Arg2) WriteTo(w io.Writer) (n int64, err error) {
+func (z *Arg2) EncodeMsg(w io.Writer) (n int64, err error) {
 	var nn int
 	en := enc.NewEncoder(w)
 	_ = nn
@@ -167,7 +167,7 @@ func (z *Arg2) WriteTo(w io.Writer) (n int64, err error) {
 	return
 }
 
-func (z *Arg2) ReadFrom(r io.Reader) (n int64, err error) {
+func (z *Arg2) DecodeMsg(r io.Reader) (n int64, err error) {
 	var sz uint32
 	var nn int
 	var field []byte
@@ -225,4 +225,3 @@ func (z *Arg2) ReadFrom(r io.Reader) (n int64, err error) {
 	enc.Done(dc)
 	return
 }
-

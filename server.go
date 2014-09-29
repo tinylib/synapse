@@ -9,6 +9,17 @@ import (
 	"net"
 )
 
+func serveListener(l net.Listener, h Handler) {
+	for {
+		conn, err := l.Accept()
+		if err != nil {
+			l.Close()
+			break
+		}
+		go serveConn(conn, h)
+	}
+}
+
 func serveConn(c net.Conn, h Handler) {
 	rd := bufio.NewReader(c)
 	wr := bufio.NewWriter(c)

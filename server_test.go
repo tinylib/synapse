@@ -34,26 +34,65 @@ func (e EchoHandler) ServeCall(req Request, res ResponseWriter) {
 }
 
 func TestEcho(t *testing.T) {
-	in, out := net.Pipe()
+	l, err := net.Listen("tcp", "localhost:7000")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go serveListener(l, EchoHandler{})
+	defer func() {
+		err := l.Close()
+		if err != nil {
+			t.Error(err)
+		}
+	}()
 
-	go serveConn(out, EchoHandler{})
-	defer in.Close()
-	cl := newclient(in)
+	conn, err := net.Dial("tcp", "localhost:7000")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		err := conn.Close()
+		if err != nil {
+			t.Error(err)
+		}
+	}()
+
+	cl := newclient(conn)
 
 	instr := testString("hello, world!")
 	var outstr testString
-	err := cl.Call("any", &instr, &outstr)
+	err = cl.Call("any", &instr, &outstr)
 	if err != nil {
 		t.Fatal(err)
 	}
 }
 
 func BenchmarkEcho(b *testing.B) {
-	in, out := net.Pipe()
+	l, err := net.Listen("tcp", "localhost:7000")
+	if err != nil {
+		b.Fatal(err)
+	}
+	go serveListener(l, EchoHandler{})
+	defer func() {
+		err := l.Close()
+		if err != nil {
+			b.Error(err)
+		}
+	}()
 
-	go serveConn(out, EchoHandler{})
-	defer in.Close()
-	cl := newclient(in)
+	conn, err := net.Dial("tcp", "localhost:7000")
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer func() {
+		err := conn.Close()
+		if err != nil {
+			b.Error(err)
+		}
+	}()
+
+	cl := newclient(conn)
+
 	instr := testString("hello, world!")
 	var outstr testString
 

@@ -1,6 +1,7 @@
 package synapse
 
 import (
+	"github.com/inconshreveable/muxado"
 	"github.com/philhofer/msgp/enc"
 	"io"
 	"net"
@@ -69,6 +70,81 @@ func TestEcho(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestMultiplex(t *testing.T) {
+	l, err := muxado.Listen("tcp", "localhost:7000")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	go serveMuxListener(l, EchoHandler{})
+
+	// wait for listener to start up
+	time.Sleep(5 * time.Microsecond)
+
+	conn, err := muxado.Dial("tcp", "localhost:7000")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	stream, err := conn.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cl := newclient(stream)
+	instr := testString("hello, world!")
+	var outstr testString
+	err = cl.Call("any", &instr, &outstr)
+	stream.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func BenchmarkMuxedEcho(b *testing.B) {
+	l, err := muxado.Listen("tcp", "localhost:7000")
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer func() {
+		l.Close()
+		time.Sleep(1 * time.Millisecond)
+	}()
+	go serveMuxListener(l, EchoHandler{})
+
+	// wait for listener to start up
+	time.Sleep(5 * time.Microsecond)
+
+	conn, err := muxado.Dial("tcp", "localhost:7000")
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer conn.Close()
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	b.SetParallelism(20)
+	b.RunParallel(func(pb *testing.PB) {
+		stream, err := conn.Open()
+		if err != nil {
+			b.Fatal(err)
+		}
+		cl := newclient(stream)
+		instr := testString("hello, world!")
+		var outstr testString
+
+		for pb.Next() {
+			err = cl.Call("any", &instr, &outstr)
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+		stream.Close()
+	})
+	b.StopTimer() // expensive defers
 }
 
 func BenchmarkEcho(b *testing.B) {

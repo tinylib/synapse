@@ -4,10 +4,43 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/binary"
+	"github.com/inconshreveable/muxado"
 	"github.com/philhofer/msgp/enc"
 	"io"
 	"net"
 )
+
+// ListenAndServe listens on the supplied address and blocks
+// until a fatal error.
+func ListenAndServe(net, addr string, h Handler) error {
+	l, err := muxado.Listen(net, addr)
+	if err != nil {
+		return err
+	}
+	return serveMuxListener(l, h)
+}
+
+func serveMuxListener(l *muxado.Listener, h Handler) error {
+	for {
+		sess, err := l.Accept()
+		if err != nil {
+			l.Close()
+			return err
+		}
+		go serveSession(sess, h)
+	}
+}
+
+func serveSession(s muxado.Session, h Handler) {
+	for {
+		stream, err := s.Accept()
+		if err != nil {
+			s.Close()
+			break
+		}
+		go serveConn(stream, h)
+	}
+}
 
 func serveListener(l net.Listener, h Handler) {
 	for {

@@ -35,20 +35,21 @@ func newclient(rw io.ReadWriteCloser) *clientconn {
 	}
 	c.lr = io.LimitedReader{R: c.conn, N: 0}
 	c.en = enc.NewEncoder(&c.buf)
-	c.dc = enc.NewDecoder(&c.lr)
+	c.dc = enc.NewDecoderSize(&c.lr, 256)
 	return c
 }
 
 type clientconn struct {
 	conn    io.ReadWriteCloser
 	buf     bytes.Buffer
-	lr      io.LimitedReader
+	lr      io.LimitedReader // wraps conn
 	scratch [4]byte
-	en      *enc.MsgWriter
-	dc      *enc.MsgReader
+	en      *enc.MsgWriter // wraps buffer
+	dc      *enc.MsgReader // wraps lr
 }
 
 func (c *clientconn) Close() error {
+	enc.Done(c.dc)
 	return c.conn.Close()
 }
 
@@ -76,9 +77,6 @@ func (c *clientconn) Call(name string, in enc.MsgEncoder, out enc.MsgDecoder) er
 		return err
 	}
 
-	// RESET
-	c.buf.Reset()
-
 	// read leading size
 	_, err = io.ReadFull(c.conn, c.scratch[:])
 	if err != nil {
@@ -100,6 +98,9 @@ func (c *clientconn) Call(name string, in enc.MsgEncoder, out enc.MsgDecoder) er
 	}
 	status := Status(code)
 	if status != OK {
+		// we don't expect a body
+		// if we get a non-OK status code,
+		// but we should clear it just in case
 		if c.lr.N > 0 {
 			// empty the reader
 			_, err = io.Copy(ioutil.Discard, &c.lr)

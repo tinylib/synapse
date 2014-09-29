@@ -5,6 +5,7 @@ import (
 	"io"
 	"net"
 	"testing"
+	"time"
 )
 
 type testString string
@@ -40,6 +41,7 @@ func TestEcho(t *testing.T) {
 	}
 	go serveListener(l, EchoHandler{})
 	defer func() {
+		l.(*net.TCPListener).SetDeadline(time.Now())
 		err := l.Close()
 		if err != nil {
 			t.Error(err)
@@ -74,35 +76,38 @@ func BenchmarkEcho(b *testing.B) {
 	}
 	go serveListener(l, EchoHandler{})
 	defer func() {
+		l.(*net.TCPListener).SetDeadline(time.Now())
 		err := l.Close()
 		if err != nil {
 			b.Error(err)
 		}
+
+		// we have to wait for the listener
+		// to *actually* close (b/c net doesn't set SO_REUSEADDR)
+		time.Sleep(500 * time.Millisecond)
 	}()
+
+	conn, err := net.Dial("tcp", "localhost:7000")
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer func() {
+		err := conn.Close()
+		if err != nil {
+			b.Error(err)
+		}
+	}()
+	cl := newclient(conn)
+	instr := testString("hello, world!")
+	var outstr testString
 
 	b.ResetTimer()
 	b.ReportAllocs()
-	b.SetParallelism(8)
-	b.RunParallel(func(pb *testing.PB) {
-		conn, err := net.Dial("tcp", "localhost:7000")
+	for i := 0; i < b.N; i++ {
+		err := cl.Call("any", &instr, &outstr)
 		if err != nil {
 			b.Fatal(err)
 		}
-		defer func() {
-			err := conn.Close()
-			if err != nil {
-				b.Error(err)
-			}
-		}()
-		cl := newclient(conn)
-		instr := testString("hello, world!")
-		var outstr testString
-		for pb.Next() {
-			err := cl.Call("any", &instr, &outstr)
-			if err != nil {
-				b.Fatal(err)
-			}
-		}
-	})
-
+	}
+	b.StopTimer()
 }

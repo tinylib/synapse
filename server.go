@@ -123,8 +123,14 @@ func (c *connHandler) connLoop() {
 			w.in = make([]byte, isz)
 		}
 
-		// don't block forever here
-		c.conn.SetReadDeadline(time.Now().Add(1 * time.Second))
+		// don't block forever here,
+		// deadline if we haven't already
+		// buffered the connection data
+		deadline := false
+		if brd.Buffered() < isz {
+			c.conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+
+		}
 		_, err = io.ReadFull(brd, w.in)
 		if err != nil {
 			log.Printf("synapse server: fatal error: %s", err)
@@ -132,7 +138,10 @@ func (c *connHandler) connLoop() {
 			break
 		}
 		// clear read deadline
-		c.conn.SetReadDeadline(time.Time{})
+		if deadline {
+			c.conn.SetReadDeadline(time.Time{})
+
+		}
 
 		// trigger handler
 		w.seq = seq
@@ -189,6 +198,7 @@ func handleConn(cw *connWrapper, h Handler) {
 	binary.BigEndian.PutUint64(bts[0:8], cw.seq)
 	binary.BigEndian.PutUint32(bts[8:12], uint32(blen))
 
+	// TODO: timeout?
 	// net.Conn takes care of the
 	// locking for us
 	_, err = cw.parent.conn.Write(bts)

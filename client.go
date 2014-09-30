@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"github.com/philhofer/msgp/enc"
 	"io"
+	"io/ioutil"
 	"log"
 	"net"
 	"strings"
@@ -91,7 +92,7 @@ func (e ErrStatus) Error() string {
 
 type client struct {
 	csn     uint64
-	conn    net.Conn
+	conn    net.Conn           // TODO: make this multiple conns
 	mlock   sync.Mutex         // protect map access
 	pending map[uint64]*waiter // map seq number to waiting handler
 }
@@ -100,7 +101,6 @@ type waiter struct {
 	parent *client        // parent *client
 	done   chan struct{}  // for notifying response (length 1)
 	buf    bytes.Buffer   // output buffer
-	seq    uint64         // seq number
 	lead   [12]byte       // lead for seq and sz
 	in     []byte         // response body
 	en     *enc.MsgWriter // wraps buffer
@@ -151,7 +151,10 @@ func (c *client) readLoop() {
 		}
 		c.mlock.Unlock()
 		if !ok {
-			// ????
+			// TODO: figure out how to handle this better
+			//
+			// discard request
+			_, _ = io.CopyN(ioutil.Discard, bwr, int64(isz))
 			continue
 		}
 
@@ -166,7 +169,7 @@ func (c *client) readLoop() {
 		if err != nil {
 			// ????
 			// we still need to send on w.done
-			log.Println(err)
+			log.Printf("synapse client: error on read: %s", err)
 		}
 		w.done <- struct{}{}
 	}
@@ -199,6 +202,10 @@ func (w *waiter) call(method string, in enc.MsgEncoder, out enc.MsgDecoder) erro
 
 	_, err := w.parent.conn.Write(bts)
 	if err != nil {
+		// dequeue
+		w.parent.mlock.Lock()
+		delete(w.parent.pending, sn)
+		w.parent.mlock.Unlock()
 		return err
 	}
 

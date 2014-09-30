@@ -2,6 +2,7 @@ package synapse
 
 import (
 	"github.com/philhofer/msgp/enc"
+	"net"
 )
 
 // Handler is the interface that
@@ -19,7 +20,7 @@ type Request interface {
 
 	// RemoteAddr returns the address
 	// that the request originated from
-	RemoteAddr() string
+	RemoteAddr() net.Addr
 
 	// Decode reads the data of the request
 	// into 'rf'
@@ -44,6 +45,7 @@ const (
 	Invalid Status = iota
 	OK
 	NotFound
+	BadRequest
 	NotAuthed
 	ServerError
 )

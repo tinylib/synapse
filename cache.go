@@ -1,71 +1,57 @@
 package synapse
 
 import (
-	"github.com/inconshreveable/muxado"
 	"github.com/philhofer/msgp/enc"
-	"github.com/philhofer/netpewl"
-	"net"
 	"sync"
 )
 
-type streamGen struct {
-	session muxado.Session
-}
+var (
+	// pool of connWrappers
+	cwPool sync.Pool
 
-// DialNew implements the netpewl.Generator interface
-func (s *streamGen) DialNew() (net.Conn, error) {
-	return s.session.Open()
-}
+	// pool of waiters
+	wtPool sync.Pool
+)
 
-// returns
-func cache(s muxado.Session) netpewl.Pool {
-	return netpewl.New(&streamGen{session: s}, 512)
-}
-
-type Client struct {
-	sess     muxado.Session
-	sessions sync.Pool
-	streams  netpewl.Pool
-}
-
-func Dial(addr string) (*Client, error) {
-	sess, err := muxado.Dial("tcp", addr)
-	if err != nil {
-		return nil, err
+func init() {
+	cwPool.New = func() interface{} {
+		cw := &connWrapper{}
+		cw.en = enc.NewEncoder(&cw.out)
+		cw.dc = enc.NewDecoder(nil)
+		return cw
 	}
 
-	cl := &Client{}
-
-	cl.sess = sess
-	cl.streams = cache(sess)
-
-	// the 'sessions' pool either returns
-	// *clientconn or error
-	cl.sessions.New = func() interface{} {
-		conn, err := cl.streams.Pop()
-		if err != nil {
-			return err
-		}
-		return newclient(conn)
+	wtPool.New = func() interface{} {
+		wt := &waiter{}
+		wt.en = enc.NewEncoder(&wt.buf)
+		wt.dc = enc.NewDecoder(nil)
+		wt.done = make(chan struct{}, 1)
+		return wt
 	}
-	return cl, nil
 }
 
-func (c *Client) Call(method string, in enc.MsgEncoder, out enc.MsgDecoder) error {
-	m := c.sessions.Get()
-	// 'm' can be either *clientconn or error
-
-	// pop session; call 'Call'
-	if cl, ok := m.(*clientconn); ok {
-		err := cl.Call(method, in, out)
-		c.sessions.Put(cl)
-		return err
-	}
-
-	return m.(error)
+func popWrapper(c *connHandler) *connWrapper {
+	cw := cwPool.Get().(*connWrapper)
+	cw.parent = c
+	return cw
 }
 
-func (c *Client) Close() error {
-	c.sessions = sync.Pool{}
-	return c.sess.Close()
+func pushWrapper(c *connWrapper) {
+	if c != nil {
+		cwPool.Put(c)
+	}
+}
+
+func popWaiter(c *client) *waiter {
+	wt := wtPool.Get().(*waiter)
+	wt.parent = c
+	return wt
+}
+
+func pushWaiter(w *waiter) {
+	if w != nil {
+		w.parent = nil
+		w.buf.Reset()
+		wtPool.Put(w)
+	}
 }

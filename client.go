@@ -1,12 +1,36 @@
 package synapse
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/binary"
 	"github.com/philhofer/msgp/enc"
 	"io"
-	"io/ioutil"
+	"log"
+	"net"
+	"sync"
+	"sync/atomic"
+	"time"
 )
+
+type Client interface {
+	Call(string, enc.MsgEncoder, enc.MsgDecoder) error
+	Close() error
+}
+
+func Dial(addr string) (Client, error) {
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		return nil, err
+	}
+
+	cl := &client{
+		conn:    conn,
+		pending: make(map[uint64]*waiter),
+	}
+	go cl.readLoop()
+	return cl, nil
+}
 
 func statusErr(s Status) error { return ErrStatus{s} }
 
@@ -29,89 +53,134 @@ func (e ErrStatus) Error() string {
 	}
 }
 
-func newclient(rw io.ReadWriteCloser) *clientconn {
-	c := &clientconn{
-		conn: rw,
-	}
-	c.lr = io.LimitedReader{R: c.conn, N: 0}
-	c.en = enc.NewEncoder(&c.buf)
-	c.dc = enc.NewDecoderSize(&c.lr, 256)
-	return c
+type client struct {
+	csn     uint64
+	conn    net.Conn
+	mlock   sync.Mutex         // protect map access
+	pending map[uint64]*waiter // map seq number to waiting handler
 }
 
-type clientconn struct {
-	conn    io.ReadWriteCloser
-	buf     bytes.Buffer
-	lr      io.LimitedReader // wraps conn
-	scratch [4]byte
-	en      *enc.MsgWriter // wraps buffer
-	dc      *enc.MsgReader // wraps lr
+type waiter struct {
+	parent *client        // parent *client
+	done   chan struct{}  // for notifying response
+	buf    bytes.Buffer   // output buffer
+	seq    uint64         // seq number
+	lead   [12]byte       // lead for seq and sz
+	in     []byte         // response body
+	en     *enc.MsgWriter // wraps buffer
+	dc     *enc.MsgReader // wraps 'in' via bytes.Reader
 }
 
-func (c *clientconn) Close() error {
-	enc.Done(c.dc)
+func (c *client) Close() error {
+	// TODO(philhofer): make this
+	// properly shut down connections
+	c.conn.SetWriteDeadline(time.Now())
+	c.conn.SetReadDeadline(time.Now().Add(1 * time.Second))
+	time.Sleep(1 * time.Second)
 	return c.conn.Close()
 }
 
-func (c *clientconn) Call(name string, in enc.MsgEncoder, out enc.MsgDecoder) error {
-	c.buf.Reset()
-	// save 4 leading bytes
-	// in the buffer for size
-	c.buf.Write(c.scratch[:])
+// readLoop continuously polls
+// the connection for server
+// responses. responses are then
+// filled into the appropriate
+// waiter's input buffer
+func (c *client) readLoop() {
+	var seq uint64
+	var sz uint32
+	var lead [12]byte
+	bwr := bufio.NewReader(c.conn)
+	for {
+		_, err := io.ReadFull(bwr, lead[:])
+		if err != nil {
+			// ???
+			if err != io.EOF {
+				log.Println(err)
+			}
+			break
+		}
 
-	// write message to buffer
-	c.en.WriteString(name)
-	if in != nil {
-		c.en.WriteIdent(in)
-	} else {
-		c.en.WriteMapHeader(0)
+		seq = binary.BigEndian.Uint64(lead[0:8])
+		sz = binary.BigEndian.Uint32(lead[8:12])
+		isz := int(sz)
+
+		c.mlock.Lock()
+		w, ok := c.pending[seq]
+		if ok {
+			delete(c.pending, seq)
+		}
+		c.mlock.Unlock()
+		if !ok {
+			// ????
+			continue
+		}
+
+		// fill the waiters input
+		// buffer and then notify
+		if cap(w.in) >= isz {
+			w.in = w.in[0:isz]
+		} else {
+			w.in = make([]byte, isz)
+		}
+		_, err = io.ReadFull(bwr, w.in)
+		if err != nil {
+			// ????
+			// we still need to send on w.done
+			log.Println(err)
+		}
+		w.done <- struct{}{}
 	}
+}
+
+func (w *waiter) call(method string, in enc.MsgEncoder, out enc.MsgDecoder) error {
+	// get sequence number
+	sn := atomic.AddUint64(&w.parent.csn, 1)
+
+	// enqueue
+	w.parent.mlock.Lock()
+	w.parent.pending[sn] = w
+	w.parent.mlock.Unlock()
+
+	// save 12 bytes up front
+	w.buf.Reset()
+	w.en.Write(w.lead[:])
 
 	// write body
-	isz := c.buf.Len()
-	bts := c.buf.Bytes()
-	binary.BigEndian.PutUint32(bts, uint32(isz))
-	_, err := c.conn.Write(bts)
+	w.en.WriteString(method)
+	w.en.WriteIdent(in)
+
+	// raw request body
+	bts := w.buf.Bytes()
+	olen := len(bts) - 12
+
+	// write seq num and size to the front of the body
+	binary.BigEndian.PutUint64(bts[0:8], sn)
+	binary.BigEndian.PutUint32(bts[8:12], uint32(olen))
+
+	log.Printf("client: writing request: len=%d; seq=%d", olen, sn)
+	_, err := w.parent.conn.Write(bts)
 	if err != nil {
-		c.conn.Close()
 		return err
 	}
 
-	// read leading size
-	_, err = io.ReadFull(c.conn, c.scratch[:])
-	if err != nil {
-		c.conn.Close()
-		return err
-	}
-	osz := binary.BigEndian.Uint32(c.scratch[:])
-	if osz == 0 {
-		return statusErr(ServerError)
-	}
-	c.lr.N = int64(osz)
+	// wait for response
+	<-w.done
+	log.Print("client: response ack")
 
-	// read status code
+	// now we can read
+	w.dc.Reset(bytes.NewReader(w.in))
 	var code int
-	code, _, err = c.dc.ReadInt()
-	if err != nil {
-		c.conn.Close()
-		return err
+	code, _, err = w.dc.ReadInt()
+	if Status(code) != OK {
+		return statusErr(Status(code))
 	}
-	status := Status(code)
-	if status != OK {
-		// we don't expect a body
-		// if we get a non-OK status code,
-		// but we should clear it just in case
-		if c.lr.N > 0 {
-			// empty the reader
-			_, err = io.Copy(ioutil.Discard, &c.lr)
-			if err != nil {
-				c.conn.Close()
-				return err
-			}
-		}
-		return statusErr(status)
-	}
+	_, err = w.dc.ReadIdent(out)
+	return err
+}
 
-	_, err = c.dc.ReadIdent(out)
+func (c *client) Call(method string, in enc.MsgEncoder, out enc.MsgDecoder) error {
+	w := popWaiter(c)
+	err := w.call(method, in, out)
+	pushWaiter(w)
 	return err
 }

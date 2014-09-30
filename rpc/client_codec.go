@@ -1,10 +1,12 @@
 package synapse
 
 import (
+	"bufio"
 	"errors"
 	"github.com/philhofer/msgp/enc"
 	"io"
 	"net/rpc"
+	"sync"
 )
 
 var (
@@ -12,12 +14,19 @@ var (
 )
 
 func NewClientCodec(c io.ReadWriteCloser) rpc.ClientCodec {
-	return &clientCodec{conn: c}
+	return &clientCodec{
+		rbuf: bufio.NewReader(c),
+		wbuf: bufio.NewWriter(c),
+		conn: c,
+	}
 }
 
 // clientCodec is the single-connection
 // implementation of rpc.ClientCodec
 type clientCodec struct {
+	rbuf *bufio.Reader
+	wbuf *bufio.Writer
+	lock sync.Mutex
 	conn io.ReadWriteCloser
 }
 
@@ -34,19 +43,19 @@ func (c *clientCodec) WriteRequest(r *rpc.Request, param interface{}) error {
 }
 
 func (c *clientCodec) ReadResponseHeader(r *rpc.Response) error {
-	return readRes(c.conn, r)
+	return readRes(c.rbuf, r)
 }
 
 func (c *clientCodec) ReadResponseBody(x interface{}) error {
-	rf, ok := x.(io.ReaderFrom)
+	rf, ok := x.(enc.MsgDecoder)
 	if !ok {
 		return badParams
 	}
-	_, err := rf.ReadFrom(c.conn)
+	_, err := rf.DecodeMsg(c.rbuf)
 	return err
 }
 
-func writeReq(w io.Writer, r *rpc.Request, wrt enc.MsgEncoder) (err error) {
+func writeReq(w *bufio.Writer, r *rpc.Request, wrt enc.MsgEncoder) (err error) {
 	en := enc.NewEncoder(w)
 	_, err = en.WriteString(r.ServiceMethod)
 	if err != nil {
@@ -57,6 +66,10 @@ func writeReq(w io.Writer, r *rpc.Request, wrt enc.MsgEncoder) (err error) {
 		return
 	}
 	_, err = en.WriteIdent(wrt)
+	if err != nil {
+		return
+	}
+	err = w.Flush
 	return
 }
 

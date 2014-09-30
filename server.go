@@ -4,131 +4,157 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/binary"
-	"github.com/inconshreveable/muxado"
 	"github.com/philhofer/msgp/enc"
 	"io"
+	"log"
 	"net"
+	"time"
 )
 
-// ListenAndServe listens on the supplied address and blocks
-// until a fatal error.
-func ListenAndServe(net, addr string, h Handler) error {
-	l, err := muxado.Listen(net, addr)
-	if err != nil {
-		return err
-	}
-	return serveMuxListener(l, h)
+// PROTOCOL:
+//
+// Request:
+//   |   seq   |   len   |   name  |  msg  |
+//   | uint64  |  uint32 |   str   | (bts) |
+//
+// Response:
+//   |   seq   |   len   |   code  |  msg  |
+//   | uint64  |  uint32 |  int64  | (bts) |
+//
+//
+// Servers read seq+len+request synchronously and write reponses asynchronously.
+// Clients read write requests asynchronously and read seq+len+response synchronously.
+//
+// All writes (on either side) need to be atomic; conn.Write() is called exactly once
+
+func Serve(l net.Listener, h Handler) error {
+	s := server{l, h}
+	return s.serve()
 }
 
-func serveMuxListener(l *muxado.Listener, h Handler) error {
+type server struct {
+	l net.Listener
+	h Handler
+}
+
+func (s *server) serve() error {
 	for {
-		sess, err := l.Accept()
+		conn, err := s.l.Accept()
 		if err != nil {
-			l.Close()
 			return err
 		}
-		go serveSession(sess, h)
+		ch := &connHandler{conn: conn, h: s.h}
+		go ch.connLoop()
 	}
 }
 
-func serveSession(s muxado.Session, h Handler) {
+type connHandler struct {
+	h    Handler
+	conn net.Conn
+}
+
+func (c *connHandler) connLoop() {
+	brd := bufio.NewReaderSize(c.conn, 1024)
+
+	var lead [12]byte
+	var seq uint64
+	var sz uint32
 	for {
-		stream, err := s.Accept()
+		// loop:
+		//  - read seq and sz
+		//  - call handler asynchronously
+
+		_, err := io.ReadFull(brd, lead[:])
 		if err != nil {
-			s.Close()
+			if err != io.EOF {
+				log.Printf("server: fatal: %s", err)
+			}
+			c.conn.Close()
 			break
 		}
-		go serveConn(stream, h)
+		seq = binary.BigEndian.Uint64(lead[0:8])
+		sz = binary.BigEndian.Uint32(lead[8:12])
+		isz := int(sz)
+		log.Printf("server: got request: len=%d, seq=%d", sz, seq)
+		w := popWrapper(c)
+
+		if cap(w.in) >= isz {
+			w.in = w.in[0:isz]
+		} else {
+			w.in = make([]byte, isz)
+		}
+
+		// don't block forever here
+		c.conn.SetReadDeadline(time.Now().Add(1 * time.Second))
+		_, err = io.ReadFull(brd, w.in)
+		if err != nil {
+			log.Printf("server: fatal error: %s", err)
+			c.conn.Close()
+			break
+		}
+		// clear read deadline
+		c.conn.SetReadDeadline(time.Time{})
+
+		// trigger handler
+		w.seq = seq
+		w.dc.Reset(bytes.NewReader(w.in))
+		log.Print("server: triggering handler...")
+		go handleConn(w, c.h) // must write atomically
 	}
 }
 
-func serveListener(l net.Listener, h Handler) {
-	for {
-		conn, err := l.Accept()
-		if err != nil {
-			l.Close()
-			break
-		}
-		go serveConn(conn, h)
-	}
+type connWrapper struct {
+	seq    uint64
+	lead   [12]byte
+	in     []byte       // incoming message
+	out    bytes.Buffer // we need to write to parent.conn atomically, so buffer the whole message
+	req    request
+	res    response
+	en     *enc.MsgWriter // wraps bytes.Buffer
+	dc     *enc.MsgReader // wraps 'in'
+	parent *connHandler
 }
 
-func serveConn(c net.Conn, h Handler) {
-	rd := bufio.NewReader(c)
+func handleConn(cw *connWrapper, h Handler) {
+	// clear/reset everything
+	cw.out.Reset()
+	cw.req.dc = cw.dc
+	cw.req.addr = cw.parent.conn.RemoteAddr()
+	cw.res.en = cw.en
+	cw.res.err = nil
+	cw.res.wrote = false
+	cw.res.status = Invalid
 
-	var outbuf bytes.Buffer // output buffer; we have to know size in advance
+	// reserve 12 bytes at the beginning
+	cw.out.Write(cw.lead[:])
 
-	var lead [4]byte // for msg size
-	var sz uint32    // ""
-	var req request  // for handler request
-	var res response // for handler response
+	var err error
+	log.Print("server: reading method name...")
+	cw.req.name, _, err = cw.dc.ReadString()
+	if err != nil {
+		cw.res.WriteHeader(BadRequest)
+	} else {
+		log.Printf("server: serving call %q", cw.req.name)
+		h.ServeCall(&cw.req, &cw.res)
 
-	req.addr = c.RemoteAddr().String()
-	res.en = enc.NewEncoder(&outbuf)
+		if !cw.res.wrote {
+			cw.res.WriteHeader(OK)
+			cw.res.Send(nil)
+		}
 
-	// this is the limited reader that
-	// the req.decoder uses; we change
-	// N before every handler call
-	lr := io.LimitedReader{R: rd, N: 0}
-	req.dc = enc.NewDecoder(&lr)
+		bts := cw.out.Bytes()
+		blen := len(bts) - 12 // length minus frame length
+		binary.BigEndian.PutUint64(bts[0:8], cw.seq)
+		binary.BigEndian.PutUint32(bts[8:12], uint32(blen))
 
-	// Loop:
-	//  - read big-endian uint32 msg size
-	//  - set limit on limit reader for req
-	//  - call handler
-	//  - handler writes response to 'outbuf'
-	//  - write response length to head of buffer; write to conn
-	for {
-		outbuf.Reset()
-		// save 4 bytes at the front of the buffer
-		outbuf.Write(lead[:])
-
-		// reset response state
-		res.wrote = false
-		res.status = Invalid
-		res.err = nil
-
-		_, err := io.ReadFull(rd, lead[:])
+		// net.Conn takes care of the
+		// locking for us
+		log.Printf("server handler: writing response: len=%d; seq=%d", blen, cw.seq)
+		_, err = cw.parent.conn.Write(bts)
 		if err != nil {
-			c.Close()
-			break
-		}
-		sz = binary.BigEndian.Uint32(lead[:])
-
-		// TODO(philhofer): handle this better
-		if sz == 0 {
-			continue
-		}
-
-		// reset limit on request read
-		lr.N = int64(sz)
-		err = req.refresh()
-		if err != nil {
-			c.Close()
-			break
-		}
-
-		h.ServeCall(&req, &res)
-
-		// in case response
-		// wasn't written by
-		// the hanlder
-		if !res.wrote {
-			res.WriteHeader(OK)
-			res.Send(nil)
-		}
-
-		// this is a little gross; we
-		// massage the first 4 bytes of the
-		// buffer by hand. but, this way
-		// we do exactly one write every time
-		ol := outbuf.Len()
-		bts := outbuf.Bytes()
-		binary.BigEndian.PutUint32(bts, uint32(ol))
-		_, err = c.Write(bts)
-		if err != nil {
-			c.Close()
-			break
+			// TODO: print something usefull...?
 		}
 	}
+
+	pushWrapper(cw)
 }

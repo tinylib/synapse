@@ -2,6 +2,7 @@ package synapse
 
 import (
 	"net"
+	"sync"
 	"testing"
 	"time"
 )
@@ -26,19 +27,26 @@ func TestClient(t *testing.T) {
 
 	defer cl.ForceClose()
 
-	instr := testString("hello, world!")
-	var outstr testString
+	const concurrent = 5
+	wg := new(sync.WaitGroup)
+	wg.Add(concurrent)
 
-	for i := 0; i < 10; i++ {
-		err = cl.Call("any", &instr, &outstr)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if instr != outstr {
-			t.Fatalf("%q in; %q out", instr, outstr)
-		}
+	for i := 0; i < concurrent; i++ {
+		go func() {
+			instr := testString("hello, world!")
+			var outstr testString
+			err = cl.Call("any", &instr, &outstr)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if instr != outstr {
+				t.Fatalf("%q in; %q out", instr, outstr)
+			}
+			wg.Done()
+		}()
 	}
 
+	wg.Wait()
 }
 
 func BenchmarkEcho(b *testing.B) {

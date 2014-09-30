@@ -37,20 +37,23 @@ type Request interface {
 	RemoteAddr() net.Addr
 
 	// Decode reads the data of the request
-	// into 'rf'
+	// into the argument.
 	Decode(enc.MsgDecoder) error
 }
 
 // A ResponseWriter it the interface
 // with which servers write responses
 type ResponseWriter interface {
-	// Deny denies the request
-	// for the reason supplied
-	// in the argument
+	// WriteHeader writes the status
+	// of the response. It is not necessary
+	// to call WriteHeader if the status
+	// is OK. Calls to WriteHeader after
+	// calls to Send() no-op.
 	WriteHeader(Status)
 
 	// Send sends the argument
-	// to the requester
+	// to the requester. Additional calls
+	// to send no-op.
 	Send(enc.MsgEncoder)
 }
 

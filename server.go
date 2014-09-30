@@ -13,24 +13,41 @@ import (
 )
 
 // maxFRAMESIZE is the maximum size of a message
-// (this is a consequence of the maximum TCP window)
 const maxFRAMESIZE = math.MaxUint16
 
-// PROTOCOL:
+// FRAMING EXPLANATION:
 //
 // Request:
-//   |   seq   |   len   |   name  |  msg  |
-//   | uint64  |  uint32 |   str   | (bts) |
+//   |   seq#  |   len   |   name  |  msg  |
+//   | uint64  |  uint32 |  string | (bts) |
 //
 // Response:
-//   |   seq   |   len   |   code  |  msg  |
+//   |   seq#  |   len   |   code  |  msg  |
 //   | uint64  |  uint32 |  int64  | (bts) |
 //
+// - 'seq' should increase monotonically per request
+// - 'len' should be the number of bytes *remaining* to be read
+// - 'name' is a messagepack-encoded string
+// - 'code' is a messagepack-encoded signed integer (up to 64 bits)
+// - 'msg' is any messagepack-encoded message
 //
-// Servers read seq+len+request synchronously and write reponses asynchronously.
-// Clients read write requests asynchronously and read seq+len+response synchronously.
+// Clients and servers do asynchronous writes and synchronous reads.
 //
-// All writes (on either side) need to be atomic; conn.Write() is called exactly once.
+// All writes (on either side) need to be atomic; conn.Write() is called exactly once and
+// (should) contain the entirety of the request (client-side) or response (server-side).
+//
+// Clients ignore requests with bad sequence numbers.
+//
+// Both clients and servers force-close connections if they
+// detect a frame larger than maxFRAMESIZE. This is to make it
+// impossible for one side to ask the other (for whatever reason)
+// to allocate an unreasonable amount of memory. Also, the maximum
+// frame size is the default size of the TCP window, which keeps
+// latency reasonable. (No more than one ACK per write.)
+//
+// In principle, the client can operate on any net.Conn, and the
+// server can operate on any net.Listener. However, the protocol
+// was designed with TCP in mind.
 
 // Serve starts a server on 'l' that serves
 // the supplied handler.
@@ -63,8 +80,11 @@ type connHandler struct {
 	conn net.Conn
 }
 
+// connLoop continuously polls the connection.
+// requests are read synchronously; the responses
+// are written in a spawned goroutine
 func (c *connHandler) connLoop() {
-	brd := bufio.NewReaderSize(c.conn, 1024)
+	brd := bufio.NewReader(c.conn)
 
 	var lead [12]byte
 	var seq uint64
@@ -88,7 +108,8 @@ func (c *connHandler) connLoop() {
 		// reject frames
 		// larger than 65kB
 		if sz > maxFRAMESIZE {
-			log.Printf("synapse server: client at %s sent a %d-byte frame; force-closing connection...", c.conn.RemoteAddr().String(), sz)
+			log.Printf("synapse server: client at %s sent a %d-byte frame; force-closing connection...",
+				c.conn.RemoteAddr().String(), sz)
 			c.conn.Close()
 			break
 		}
@@ -134,6 +155,9 @@ type connWrapper struct {
 	parent *connHandler
 }
 
+// handleconn sets up the Request and ResponseWriter
+// interfaces and calls the handler.
+// output is written to cw.parent.conn
 func handleConn(cw *connWrapper, h Handler) {
 	// clear/reset everything
 	cw.out.Reset()
@@ -153,24 +177,24 @@ func handleConn(cw *connWrapper, h Handler) {
 		cw.res.WriteHeader(BadRequest)
 	} else {
 		h.ServeCall(&cw.req, &cw.res)
+	}
 
-		if !cw.res.wrote {
-			cw.res.WriteHeader(OK)
-			cw.res.Send(nil)
-		}
+	if !cw.res.wrote {
+		cw.res.WriteHeader(OK)
+		cw.res.Send(nil)
+	}
 
-		bts := cw.out.Bytes()
-		blen := len(bts) - 12 // length minus frame length
-		binary.BigEndian.PutUint64(bts[0:8], cw.seq)
-		binary.BigEndian.PutUint32(bts[8:12], uint32(blen))
+	bts := cw.out.Bytes()
+	blen := len(bts) - 12 // length minus frame length
+	binary.BigEndian.PutUint64(bts[0:8], cw.seq)
+	binary.BigEndian.PutUint32(bts[8:12], uint32(blen))
 
-		// net.Conn takes care of the
-		// locking for us
-		_, err = cw.parent.conn.Write(bts)
-		if err != nil {
-			// TODO: print something more usefull...?
-			log.Printf("synapse server: error writing response: %s", err)
-		}
+	// net.Conn takes care of the
+	// locking for us
+	_, err = cw.parent.conn.Write(bts)
+	if err != nil {
+		// TODO: print something more usefull...?
+		log.Printf("synapse server: error writing response: %s", err)
 	}
 	pushWrapper(cw)
 }

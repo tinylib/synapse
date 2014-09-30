@@ -15,9 +15,9 @@ import (
 	"time"
 )
 
-// Dial creates a new client to the server
+// DialTCP creates a new client to the server
 // located at the provided address.
-func Dial(address string) (Client, error) {
+func DialTCP(address string) (Client, error) {
 	addr, err := net.ResolveTCPAddr("tcp", address)
 	if err != nil {
 		return nil, err
@@ -27,12 +27,31 @@ func Dial(address string) (Client, error) {
 		return nil, err
 	}
 	conn.SetKeepAlive(true)
+	return newClient(conn), nil
+}
+
+// DialUnix creates a new client to the
+// server listening on the provided
+// unix socket address
+func DialUnix(address string) (Client, error) {
+	addr, err := net.ResolveUnixAddr("unix", address)
+	if err != nil {
+		return nil, err
+	}
+	conn, err := net.DialUnix("unix", nil, addr)
+	if err != nil {
+		return nil, err
+	}
+	return newClient(conn), nil
+}
+
+func newClient(c net.Conn) *client {
 	cl := &client{
-		conn:    conn,
+		conn:    c,
 		pending: make(map[uint64]*waiter),
 	}
 	go cl.readLoop()
-	return cl, nil
+	return cl
 }
 
 // IsNotFound returns whether or not

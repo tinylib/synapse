@@ -22,7 +22,7 @@ func TestClient(t *testing.T) {
 
 	go Serve(l, EchoHandler{})
 
-	cl, err := Dial("localhost:7000")
+	cl, err := DialTCP("localhost:7000")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +62,42 @@ func BenchmarkEcho(b *testing.B) {
 		time.Sleep(1 * time.Millisecond)
 	}()
 	go Serve(l, EchoHandler{})
-	cl, err := Dial("localhost:7000")
+	cl, err := DialTCP("localhost:7000")
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer cl.ForceClose()
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	b.SetParallelism(20)
+	b.RunParallel(func(pb *testing.PB) {
+		instr := testString("hello, world!")
+		var outstr testString
+		for pb.Next() {
+			err = cl.Call("any", &instr, &outstr)
+			if err != nil {
+				b.Fatal(err)
+			}
+			if instr != outstr {
+				b.Fatalf("%q in; %q out", instr, outstr)
+			}
+		}
+	})
+	b.StopTimer()
+}
+
+func BenchmarkUnixSocket(b *testing.B) {
+	l, err := net.Listen("unix", "synapse")
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer func() {
+		l.Close()
+		time.Sleep(1 * time.Millisecond)
+	}()
+	go Serve(l, EchoHandler{})
+	cl, err := DialUnix("synapse")
 	if err != nil {
 		b.Fatal(err)
 	}

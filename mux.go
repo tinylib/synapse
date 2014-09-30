@@ -1,14 +1,20 @@
 package synapse
 
+// NewMux returns a mux that registers
+// named handlers. Mux will pass
+// requests to the handler that has exactly
+// the same name as the requested method. Otherwise,
+// it will return a Not Found error to the client.
 func NewMux() Mux {
 	return &mux{
 		hlrs: make(map[string]Handler),
 	}
 }
 
+// Mux is a server request multiplexer
 type Mux interface {
 	// Register registers a handler
-	// by with a give name
+	// by 'name'
 	Register(name string, handler Handler)
 
 	// Mux implements the Handler interface

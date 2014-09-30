@@ -5,7 +5,7 @@ import (
 	"net"
 )
 
-// request implementation
+// Request implementation
 type request struct {
 	name string
 	addr net.Addr

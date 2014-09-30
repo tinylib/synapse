@@ -14,18 +14,18 @@ import (
 	"time"
 )
 
-type Client interface {
-	Call(string, enc.MsgEncoder, enc.MsgDecoder) error
-	Close() error
-	ForceClose() error
-}
-
-func Dial(addr string) (Client, error) {
-	conn, err := net.Dial("tcp", addr)
+// Dial creates a new client to the server
+// located at the provided address.
+func Dial(address string) (Client, error) {
+	addr, err := net.ResolveTCPAddr("tcp", address)
 	if err != nil {
 		return nil, err
 	}
-
+	conn, err := net.DialTCP("tcp", nil, addr)
+	if err != nil {
+		return nil, err
+	}
+	conn.SetKeepAlive(true)
 	cl := &client{
 		conn:    conn,
 		pending: make(map[uint64]*waiter),
@@ -34,8 +34,42 @@ func Dial(addr string) (Client, error) {
 	return cl, nil
 }
 
+// IsNotFound returns whether or not
+// the error is a synapse.NotFound error
+func IsNotFound(err error) bool {
+	return isStatus(err, NotFound)
+}
+
+// IsNotAuthed returns whether or not
+// the error is a synapse.NotAuthed error
+func IsNotAuthed(err error) bool {
+	return isStatus(err, NotAuthed)
+}
+
+// IsServerError returns whether or not
+// the error is a synapse.ServerError error
+func IsServerError(err error) bool {
+	return isStatus(err, ServerError)
+}
+
+// IsBadRequest returns whether or not
+// the error is a synapse.IsBadRequest error
+func IsBadRequest(err error) bool {
+	return isStatus(err, BadRequest)
+}
+
+func isStatus(err error, s Status) bool {
+	es, ok := err.(ErrStatus)
+	if ok && es.Status == s {
+		return true
+	}
+	return false
+}
+
 func statusErr(s Status) error { return ErrStatus{s} }
 
+// ErrStatus is the error type returned
+// for status codes that are not "OK"
 type ErrStatus struct {
 	Status Status
 }
@@ -64,7 +98,7 @@ type client struct {
 
 type waiter struct {
 	parent *client        // parent *client
-	done   chan struct{}  // for notifying response
+	done   chan struct{}  // for notifying response (length 1)
 	buf    bytes.Buffer   // output buffer
 	seq    uint64         // seq number
 	lead   [12]byte       // lead for seq and sz
@@ -78,8 +112,8 @@ func (c *client) ForceClose() error {
 }
 
 func (c *client) Close() error {
-	// TODO(philhofer): make this
-	// properly shut down connections
+	// TODO(philhofer): make this more graceful
+
 	c.conn.SetWriteDeadline(time.Now())
 	c.conn.SetReadDeadline(time.Now().Add(1 * time.Second))
 	time.Sleep(1 * time.Second)

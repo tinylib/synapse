@@ -4,6 +4,7 @@ import (
 	"github.com/philhofer/msgp/enc"
 )
 
+// ResponseWriter implementation
 type response struct {
 	status Status
 	wrote  bool
@@ -33,7 +34,7 @@ func (r *response) Send(e enc.MsgEncoder) {
 		return
 	}
 	if e != nil {
-		_, r.err = r.en.WriteIdent(e)
+		_, r.err = e.EncodeTo(r.en)
 	}
 	return
 }

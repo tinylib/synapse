@@ -7,9 +7,13 @@ import (
 	"github.com/philhofer/msgp/enc"
 	"io"
 	"log"
+	"math"
 	"net"
 	"time"
 )
+
+// maxFRAMESIZE is the maximum size of a message
+const maxFRAMESIZE = math.MaxUint16
 
 // PROTOCOL:
 //
@@ -27,6 +31,8 @@ import (
 //
 // All writes (on either side) need to be atomic; conn.Write() is called exactly once
 
+// Serve starts a server on 'l' that serves
+// the supplied handler.
 func Serve(l net.Listener, h Handler) error {
 	s := server{l, h}
 	return s.serve()
@@ -48,6 +54,9 @@ func (s *server) serve() error {
 	}
 }
 
+// connHandler handles network
+// connections and multiplexes requests
+// to connWrappers
 type connHandler struct {
 	h    Handler
 	conn net.Conn
@@ -74,6 +83,15 @@ func (c *connHandler) connLoop() {
 		}
 		seq = binary.BigEndian.Uint64(lead[0:8])
 		sz = binary.BigEndian.Uint32(lead[8:12])
+
+		// reject frames
+		// larger than 65kB
+		if sz > maxFRAMESIZE {
+			log.Printf("synapse server: client at %s sent a %d-byte frame; force-closing connection...", c.conn.RemoteAddr().String(), sz)
+			c.conn.Close()
+			break
+		}
+
 		isz := int(sz)
 		w := popWrapper(c)
 
@@ -87,7 +105,7 @@ func (c *connHandler) connLoop() {
 		c.conn.SetReadDeadline(time.Now().Add(1 * time.Second))
 		_, err = io.ReadFull(brd, w.in)
 		if err != nil {
-			log.Printf("server: fatal error: %s", err)
+			log.Printf("synapse server: fatal error: %s", err)
 			c.conn.Close()
 			break
 		}
@@ -101,6 +119,8 @@ func (c *connHandler) connLoop() {
 	}
 }
 
+// connWrapper contains all the resources
+// necessary to execute a Handler on a request
 type connWrapper struct {
 	seq    uint64
 	lead   [12]byte
@@ -147,9 +167,9 @@ func handleConn(cw *connWrapper, h Handler) {
 		// locking for us
 		_, err = cw.parent.conn.Write(bts)
 		if err != nil {
-			// TODO: print something usefull...?
+			// TODO: print something more usefull...?
+			log.Printf("synapse server: error writing response: %s", err)
 		}
 	}
-
 	pushWrapper(cw)
 }

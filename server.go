@@ -75,7 +75,6 @@ func (c *connHandler) connLoop() {
 		seq = binary.BigEndian.Uint64(lead[0:8])
 		sz = binary.BigEndian.Uint32(lead[8:12])
 		isz := int(sz)
-		log.Printf("server: got request: len=%d, seq=%d", sz, seq)
 		w := popWrapper(c)
 
 		if cap(w.in) >= isz {
@@ -98,7 +97,6 @@ func (c *connHandler) connLoop() {
 		// trigger handler
 		w.seq = seq
 		w.dc.Reset(bytes.NewReader(w.in))
-		log.Print("server: triggering handler...")
 		go handleConn(w, c.h) // must write atomically
 	}
 }
@@ -129,12 +127,10 @@ func handleConn(cw *connWrapper, h Handler) {
 	cw.out.Write(cw.lead[:])
 
 	var err error
-	log.Print("server: reading method name...")
 	cw.req.name, _, err = cw.dc.ReadString()
 	if err != nil {
 		cw.res.WriteHeader(BadRequest)
 	} else {
-		log.Printf("server: serving call %q", cw.req.name)
 		h.ServeCall(&cw.req, &cw.res)
 
 		if !cw.res.wrote {
@@ -149,7 +145,6 @@ func handleConn(cw *connWrapper, h Handler) {
 
 		// net.Conn takes care of the
 		// locking for us
-		log.Printf("server handler: writing response: len=%d; seq=%d", blen, cw.seq)
 		_, err = cw.parent.conn.Write(bts)
 		if err != nil {
 			// TODO: print something usefull...?

@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -16,6 +17,7 @@ import (
 type Client interface {
 	Call(string, enc.MsgEncoder, enc.MsgDecoder) error
 	Close() error
+	ForceClose() error
 }
 
 func Dial(addr string) (Client, error) {
@@ -71,6 +73,10 @@ type waiter struct {
 	dc     *enc.MsgReader // wraps 'in' via bytes.Reader
 }
 
+func (c *client) ForceClose() error {
+	return c.conn.Close()
+}
+
 func (c *client) Close() error {
 	// TODO(philhofer): make this
 	// properly shut down connections
@@ -94,7 +100,7 @@ func (c *client) readLoop() {
 		_, err := io.ReadFull(bwr, lead[:])
 		if err != nil {
 			// ???
-			if err != io.EOF {
+			if err != io.EOF && !strings.Contains(err.Error(), "closed") {
 				log.Println(err)
 			}
 			break
@@ -157,7 +163,6 @@ func (w *waiter) call(method string, in enc.MsgEncoder, out enc.MsgDecoder) erro
 	binary.BigEndian.PutUint64(bts[0:8], sn)
 	binary.BigEndian.PutUint32(bts[8:12], uint32(olen))
 
-	log.Printf("client: writing request: len=%d; seq=%d", olen, sn)
 	_, err := w.parent.conn.Write(bts)
 	if err != nil {
 		return err
@@ -165,7 +170,6 @@ func (w *waiter) call(method string, in enc.MsgEncoder, out enc.MsgDecoder) erro
 
 	// wait for response
 	<-w.done
-	log.Print("client: response ack")
 
 	// now we can read
 	w.dc.Reset(bytes.NewReader(w.in))

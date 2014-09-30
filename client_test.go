@@ -24,7 +24,7 @@ func TestClient(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	defer cl.Close()
+	defer cl.ForceClose()
 
 	instr := testString("hello, world!")
 	var outstr testString
@@ -39,4 +39,39 @@ func TestClient(t *testing.T) {
 		}
 	}
 
+}
+
+func BenchmarkEcho(b *testing.B) {
+	l, err := net.Listen("tcp", "localhost:7000")
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer func() {
+		l.Close()
+		time.Sleep(1 * time.Millisecond)
+	}()
+	go Serve(l, EchoHandler{})
+	cl, err := Dial("localhost:7000")
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer cl.ForceClose()
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	b.SetParallelism(5)
+	b.RunParallel(func(pb *testing.PB) {
+		instr := testString("hello, world!")
+		var outstr testString
+		for pb.Next() {
+			err = cl.Call("any", &instr, &outstr)
+			if err != nil {
+				b.Fatal(err)
+			}
+			if instr != outstr {
+				b.Fatalf("%q in; %q out", instr, outstr)
+			}
+		}
+	})
+	b.StopTimer()
 }

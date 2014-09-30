@@ -13,6 +13,7 @@ import (
 )
 
 // maxFRAMESIZE is the maximum size of a message
+// (this is a consequence of the maximum TCP window)
 const maxFRAMESIZE = math.MaxUint16
 
 // PROTOCOL:
@@ -29,7 +30,7 @@ const maxFRAMESIZE = math.MaxUint16
 // Servers read seq+len+request synchronously and write reponses asynchronously.
 // Clients read write requests asynchronously and read seq+len+response synchronously.
 //
-// All writes (on either side) need to be atomic; conn.Write() is called exactly once
+// All writes (on either side) need to be atomic; conn.Write() is called exactly once.
 
 // Serve starts a server on 'l' that serves
 // the supplied handler.

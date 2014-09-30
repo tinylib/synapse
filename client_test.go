@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+// open up a client and server; make
+// some concurrent requests
 func TestClient(t *testing.T) {
 	l, err := net.Listen("tcp", "localhost:7000")
 	if err != nil {
@@ -35,7 +37,7 @@ func TestClient(t *testing.T) {
 		go func() {
 			instr := testString("hello, world!")
 			var outstr testString
-			err = cl.Call("any", &instr, &outstr)
+			err := cl.Call("any", &instr, &outstr)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -49,6 +51,7 @@ func TestClient(t *testing.T) {
 	wg.Wait()
 }
 
+// benchmarks the test case above
 func BenchmarkEcho(b *testing.B) {
 	l, err := net.Listen("tcp", "localhost:7000")
 	if err != nil {
@@ -67,7 +70,7 @@ func BenchmarkEcho(b *testing.B) {
 
 	b.ResetTimer()
 	b.ReportAllocs()
-	b.SetParallelism(5)
+	b.SetParallelism(20)
 	b.RunParallel(func(pb *testing.PB) {
 		instr := testString("hello, world!")
 		var outstr testString

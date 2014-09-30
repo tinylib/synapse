@@ -6,10 +6,10 @@ import (
 )
 
 var (
-	// pool of connWrappers
+	// pool of connWrappers (for server)
 	cwPool sync.Pool
 
-	// pool of waiters
+	// pool of waiters (for client)
 	wtPool sync.Pool
 )
 
@@ -17,14 +17,14 @@ func init() {
 	cwPool.New = func() interface{} {
 		cw := &connWrapper{}
 		cw.en = enc.NewEncoder(&cw.out)
-		cw.dc = enc.NewDecoder(nil)
+		cw.dc = enc.NewDecoder(nil) // set later
 		return cw
 	}
 
 	wtPool.New = func() interface{} {
 		wt := &waiter{}
 		wt.en = enc.NewEncoder(&wt.buf)
-		wt.dc = enc.NewDecoder(nil)
+		wt.dc = enc.NewDecoder(nil) // set later
 		wt.done = make(chan struct{}, 1)
 		return wt
 	}

@@ -302,17 +302,6 @@ func (c *client) Call(method string, in enc.MsgEncoder, out enc.MsgDecoder) erro
 	return err
 }
 
-// AsyncHandler is returned by
-// calls to client.Async
-type AsyncHandler interface {
-	// Read reads the response to the
-	// request into the decoder, returning
-	// any errors encountered. Read blocks
-	// until a response is received. Calling
-	// Read more than once will cause a panic.
-	Read(out enc.MsgDecoder) error
-}
-
 // just wrap the waitier
 // pointer
 type async struct {

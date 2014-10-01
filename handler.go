@@ -12,6 +12,11 @@ type Client interface {
 	// return the response to 'out'.
 	Call(method string, in enc.MsgEncoder, out enc.MsgDecoder) error
 
+	// Async works like Call, except that the caller
+	// can continue execution and read the response
+	// later via the returned AsyncHandler
+	Async(method string, in enc.MsgEncoder) (AsyncHandler, error)
+
 	// Close closes the client.
 	Close() error
 

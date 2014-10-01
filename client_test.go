@@ -51,6 +51,52 @@ func TestClient(t *testing.T) {
 	wg.Wait()
 }
 
+func TestAsyncClient(t *testing.T) {
+	l, err := net.Listen("tcp", "localhost:7000")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer func() {
+		l.Close()
+		time.Sleep(1 * time.Millisecond)
+	}()
+
+	go Serve(l, EchoHandler{})
+
+	cl, err := DialTCP("localhost:7000")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer cl.ForceClose()
+
+	// make 5 requests, then
+	// read 5 responses
+	const concurrent = 5
+	hlrs := make([]AsyncHandler, concurrent)
+	instr := testString("hello, world!")
+	for i := 0; i < concurrent; i++ {
+		hlrs[i], err = cl.Async("any", &instr)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	for i := range hlrs {
+		var outstr testString
+		err = hlrs[i].Read(&outstr)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if outstr != instr {
+			t.Errorf("%q in; %q out", instr, outstr)
+		}
+	}
+
+}
+
 // benchmarks the test case above
 func BenchmarkEcho(b *testing.B) {
 	l, err := net.Listen("tcp", "localhost:7000")
@@ -110,7 +156,7 @@ func BenchmarkUnixSocket(b *testing.B) {
 		instr := testString("hello, world!")
 		var outstr testString
 		for pb.Next() {
-			err = cl.Call("any", &instr, &outstr)
+			err := cl.Call("any", &instr, &outstr)
 			if err != nil {
 				b.Fatal(err)
 			}

@@ -230,7 +230,7 @@ func (c *client) readLoop() {
 	}
 }
 
-func (w *waiter) call(method string, in enc.MsgEncoder, out enc.MsgDecoder) error {
+func (w *waiter) write(method string, in enc.MsgEncoder) error {
 	// get sequence number
 	sn := atomic.AddUint64(&w.parent.csn, 1)
 
@@ -263,19 +263,34 @@ func (w *waiter) call(method string, in enc.MsgEncoder, out enc.MsgDecoder) erro
 		w.parent.mlock.Unlock()
 		return err
 	}
+	return nil
+}
 
-	// wait for response
-	<-w.done
-
-	// now we can read
+func (w *waiter) read(out enc.MsgDecoder) error {
+	var (
+		code int
+		err  error
+	)
 	w.dc.Reset(bytes.NewReader(w.in))
-	var code int
 	code, _, err = w.dc.ReadInt()
 	if Status(code) != OK {
 		return statusErr(Status(code))
 	}
 	_, err = out.DecodeFrom(w.dc)
 	return err
+}
+
+func (w *waiter) call(method string, in enc.MsgEncoder, out enc.MsgDecoder) error {
+	err := w.write(method, in)
+	if err != nil {
+		return err
+	}
+
+	// wait for response
+	<-w.done
+
+	// now we can read
+	return w.read(out)
 }
 
 func (c *client) Call(method string, in enc.MsgEncoder, out enc.MsgDecoder) error {
@@ -285,4 +300,40 @@ func (c *client) Call(method string, in enc.MsgEncoder, out enc.MsgDecoder) erro
 	err := w.call(method, in, out)
 	pushWaiter(w)
 	return err
+}
+
+// AsyncHandler is returned by
+// calls to client.Async
+type AsyncHandler interface {
+	// Read reads the response to the
+	// request into the decoder, returning
+	// any errors encountered. Read blocks
+	// until a response is received. Calling
+	// Read more than once will cause a panic.
+	Read(out enc.MsgDecoder) error
+}
+
+// just wrap the waitier
+// pointer
+type async struct {
+	w *waiter
+}
+
+func (a async) Read(out enc.MsgDecoder) error {
+	// wait
+	<-a.w.done
+
+	err := a.w.read(out)
+	pushWaiter(a.w)
+	a.w = nil
+	return err
+}
+
+func (c *client) Async(method string, in enc.MsgEncoder) (AsyncHandler, error) {
+	w := popWaiter(c)
+	err := w.write(method, in)
+	if err != nil {
+		return nil, err
+	}
+	return async{w}, nil
 }

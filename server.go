@@ -50,7 +50,8 @@ const maxFRAMESIZE = math.MaxUint16
 // was designed with TCP in mind.
 
 // Serve starts a server on 'l' that serves
-// the supplied handler.
+// the supplied handler. It blocks until the
+// handler closes.
 func Serve(l net.Listener, h Handler) error {
 	s := server{l, h}
 	return s.serve()

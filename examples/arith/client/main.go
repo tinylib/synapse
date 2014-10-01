@@ -6,7 +6,7 @@ import (
 )
 
 func main() {
-	cl, err := synapse.Dial("localhost:7000")
+	cl, err := synapse.DialTCP("localhost:7000")
 	if err != nil {
 		fmt.Println(err)
 		return

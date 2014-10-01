@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"github.com/philhofer/msgp/enc"
 	"io"
 	"io/ioutil"
@@ -47,6 +48,7 @@ func DialUnix(address string) (Client, error) {
 
 func newClient(c net.Conn) *client {
 	cl := &client{
+		cflag:   1,
 		conn:    c,
 		pending: make(map[uint64]*waiter),
 	}
@@ -113,6 +115,7 @@ func (e ErrStatus) Error() string {
 
 type client struct {
 	csn     uint64             // sequence number; atomic
+	cflag   uint32             // client state; 1 is open; 0 is closed
 	conn    net.Conn           // TODO: make this multiple conns (pending benchmark data)
 	mlock   sync.Mutex         // to protect map access
 	pending map[uint64]*waiter // map seq number to waiting handler
@@ -146,6 +149,12 @@ func (c *client) ForceClose() error {
 func (c *client) Close() error {
 	// TODO(philhofer): make this more graceful
 
+	// already stopped
+	if !atomic.CompareAndSwapUint32(&c.cflag, 1, 0) {
+		return nil
+	}
+
+	writeCmd(c.conn, cmdFin, nil)
 	c.conn.SetWriteDeadline(time.Now())
 	c.conn.SetReadDeadline(time.Now().Add(1 * time.Second))
 	time.Sleep(1 * time.Second)
@@ -162,9 +171,17 @@ func (c *client) readLoop() {
 	var sz uint32
 	var lead [12]byte
 	bwr := bufio.NewReader(c.conn)
+
+	writeCmd(c.conn, cmdLog, []byte(fmt.Sprintf("client connected from %s", c.conn.LocalAddr().String())))
 	for {
 		_, err := io.ReadFull(bwr, lead[:])
 		if err != nil {
+			if atomic.LoadUint32(&c.cflag) == 0 {
+				// we received a FIN flag or
+				// we intended to close
+				return
+			}
+
 			// log an error if the connection
 			// wasn't simply closed
 			if err != io.EOF && !strings.Contains(err.Error(), "closed") {
@@ -179,6 +196,12 @@ func (c *client) readLoop() {
 			log.Printf("synapse client: server sent response greater than %d bytes; closing connection", maxFRAMESIZE)
 			c.conn.Close()
 			return
+		}
+
+		// handle command
+		if seq == 0 {
+			readCmdClient(c, c.conn, bwr, sz)
+			continue
 		}
 
 		isz := int(sz)

@@ -9,6 +9,7 @@ import (
 	"log"
 	"math"
 	"net"
+	"strings"
 	"time"
 )
 
@@ -97,11 +98,12 @@ func (c *connHandler) connLoop() {
 
 		_, err := io.ReadFull(brd, lead[:])
 		if err != nil {
-			if err != io.EOF {
+			if err != io.EOF && !strings.Contains(err.Error(), "closed") {
 				log.Printf("server: fatal: %s", err)
+				c.conn.Close()
+				break
 			}
-			c.conn.Close()
-			break
+			return
 		}
 		seq = binary.BigEndian.Uint64(lead[0:8])
 		sz = binary.BigEndian.Uint32(lead[8:12])
@@ -113,6 +115,12 @@ func (c *connHandler) connLoop() {
 				c.conn.RemoteAddr().String(), sz)
 			c.conn.Close()
 			break
+		}
+
+		// handle command
+		if seq == 0 {
+			readCmdServer(c.conn, brd, sz)
+			continue
 		}
 
 		isz := int(sz)

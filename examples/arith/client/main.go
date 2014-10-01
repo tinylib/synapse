@@ -11,6 +11,7 @@ func main() {
 		fmt.Println(err)
 		return
 	}
+	defer cl.Close()
 
 	pi := 3.14159
 	num := Num{Value: pi}

@@ -27,7 +27,7 @@ func TestClient(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	defer cl.ForceClose()
+	defer cl.Close()
 
 	const concurrent = 5
 	wg := new(sync.WaitGroup)
@@ -69,7 +69,7 @@ func TestAsyncClient(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	defer cl.ForceClose()
+	defer cl.Close()
 
 	// make 5 requests, then
 	// read 5 responses

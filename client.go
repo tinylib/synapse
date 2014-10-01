@@ -112,9 +112,9 @@ func (e ErrStatus) Error() string {
 }
 
 type client struct {
-	csn     uint64
-	conn    net.Conn           // TODO: make this multiple conns
-	mlock   sync.Mutex         // protect map access
+	csn     uint64             // sequence number; atomic
+	conn    net.Conn           // TODO: make this multiple conns (pending benchmark data)
+	mlock   sync.Mutex         // to protect map access
 	pending map[uint64]*waiter // map seq number to waiting handler
 }
 

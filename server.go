@@ -129,6 +129,7 @@ func (c *connHandler) connLoop() {
 		// buffered the connection data
 		deadline := false
 		if brd.Buffered() < isz {
+			deadline = true
 			c.conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
 
 		}

@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/binary"
-	"fmt"
+	"errors"
 	"github.com/philhofer/msgp/enc"
 	"io"
 	"io/ioutil"
@@ -14,6 +14,10 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+)
+
+var (
+	ErrClosed = errors.New("client is closed")
 )
 
 // DialTCP creates a new client to the server
@@ -155,6 +159,19 @@ func (c *client) Close() error {
 	}
 
 	writeCmd(c.conn, cmdFin, nil)
+	c.mlock.Lock()
+	pending := len(c.pending)
+	c.mlock.Unlock()
+
+	// if we don't have any pending,
+	// then no need to deadline; no one
+	// can begin writing ones we have set
+	// cflag to 0
+	if pending == 0 {
+		return c.ForceClose()
+	}
+
+	// we have pending conns; deadline them
 	c.conn.SetWriteDeadline(time.Now())
 	c.conn.SetReadDeadline(time.Now().Add(1 * time.Second))
 	time.Sleep(1 * time.Second)
@@ -172,7 +189,6 @@ func (c *client) readLoop() {
 	var lead [12]byte
 	bwr := bufio.NewReader(c.conn)
 
-	writeCmd(c.conn, cmdLog, []byte(fmt.Sprintf("client connected from %s", c.conn.LocalAddr().String())))
 	for {
 		_, err := io.ReadFull(bwr, lead[:])
 		if err != nil {
@@ -254,6 +270,12 @@ func (c *client) readLoop() {
 }
 
 func (w *waiter) write(method string, in enc.MsgEncoder) error {
+
+	// don't write if we're closing
+	if atomic.LoadUint32(&w.parent.cflag) == 0 {
+		return ErrClosed
+	}
+
 	// get sequence number
 	sn := atomic.AddUint64(&w.parent.csn, 1)
 

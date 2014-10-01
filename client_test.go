@@ -112,7 +112,7 @@ func BenchmarkEcho(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer cl.ForceClose()
+	defer cl.Close()
 
 	b.ResetTimer()
 	b.ReportAllocs()
@@ -147,7 +147,7 @@ func BenchmarkUnixSocket(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer cl.ForceClose()
+	defer cl.Close()
 
 	b.ResetTimer()
 	b.ReportAllocs()

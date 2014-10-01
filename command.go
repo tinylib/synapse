@@ -7,7 +7,6 @@ import (
 	"log"
 	"net"
 	"sync/atomic"
-	"time"
 )
 
 // command is a message
@@ -128,24 +127,22 @@ func readCmdServer(conn net.Conn, r io.Reader, sz uint32) {
 // logAction is the response to cmdLog
 type logAction struct{}
 
-func (l logAction) do(m []byte) {
-	log.Printf("LOG received: %q", m)
+func (l logAction) do(c net.Conn, m []byte) {
+	log.Printf("LOG from %s: %q", c.RemoteAddr(), m)
 }
-func (l logAction) Client(_ *client, _ net.Conn, m []byte) { l.do(m) }
-func (l logAction) Server(_ net.Conn, m []byte)            { l.do(m) }
+func (l logAction) Client(_ *client, c net.Conn, m []byte) { l.do(c, m) }
+func (l logAction) Server(c net.Conn, m []byte)            { l.do(c, m) }
 
 type finAction struct{}
 
 func (f finAction) Client(c *client, conn net.Conn, _ []byte) {
-	// set closed flag to 0
+	// set closed flag to 0; wait for server to close the connection
 	if !atomic.CompareAndSwapUint32(&c.cflag, 1, 0) {
 		return
 	}
 }
 
 func (f finAction) Server(conn net.Conn, _ []byte) {
-	log.Printf("FIN command received from %s; closing connection...", conn.RemoteAddr().String())
-	conn.SetWriteDeadline(time.Now().Add(1 * time.Second))
-	time.Sleep(1 * time.Second)
-	conn.Close()
+	log.Printf("FIN command received from %s", conn.RemoteAddr().String())
+	// wait for remote end to hang up
 }

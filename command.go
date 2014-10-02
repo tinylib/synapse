@@ -13,7 +13,9 @@ import (
 // from the server, etc.
 //
 // The ordering of events is:
-//  - client -> [command] -> server -> action.Server() -> [command] -> client -> action.Client()
+//  - client -> writeCmd([command]) -> server -> action.Server() -> [command] -> client -> action.Client()
+//
+// See the ping handler and client.ping() for an example.
 
 // frame type
 type fType byte

@@ -144,7 +144,7 @@ type waiter struct {
 	dc     *enc.MsgReader // wraps 'in' via bytes.Reader
 }
 
-func (c *client) ForceClose() error {
+func (c *client) forceClose() error {
 	err := c.conn.Close()
 	if err != nil {
 		return err
@@ -174,14 +174,14 @@ func (c *client) Close() error {
 	pending := len(c.pending)
 	c.mlock.Unlock()
 	if pending == 0 {
-		return c.ForceClose()
+		return c.forceClose()
 	}
 
 	// we have pending conns; deadline them
 	c.conn.SetWriteDeadline(time.Now())
 	c.conn.SetReadDeadline(time.Now().Add(1 * time.Second))
 	time.Sleep(1 * time.Second)
-	return c.ForceClose()
+	return c.forceClose()
 }
 
 // readLoop continuously polls

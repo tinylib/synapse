@@ -32,7 +32,7 @@ func DialTCP(address string) (Client, error) {
 		return nil, err
 	}
 	conn.SetKeepAlive(true)
-	return newClient(conn), nil
+	return newClient(conn)
 }
 
 // DialUnix creates a new client to the
@@ -47,17 +47,26 @@ func DialUnix(address string) (Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newClient(conn), nil
+	return newClient(conn)
 }
 
-func newClient(c net.Conn) *client {
+func newClient(c net.Conn) (*client, error) {
 	cl := &client{
 		cflag:   1,
 		conn:    c,
 		pending: make(map[uint64]*waiter),
 	}
 	go cl.readLoop()
-	return cl
+
+	// do a ping to check
+	// for sanity
+	err := cl.ping()
+	if err != nil {
+		cl.conn.Close()
+		return nil, err
+	}
+
+	return cl, nil
 }
 
 // IsNotFound returns whether or not
@@ -129,13 +138,13 @@ type waiter struct {
 	parent *client        // parent *client
 	done   chan struct{}  // for notifying response (length 1)
 	buf    bytes.Buffer   // output buffer
-	lead   [12]byte       // lead for seq and sz
+	lead   [13]byte       // lead for seq, type, sz
 	in     []byte         // response body
 	en     *enc.MsgWriter // wraps buffer
 	dc     *enc.MsgReader // wraps 'in' via bytes.Reader
 }
 
-func (c *client) ForceClose() error {
+func (c *client) forceClose() error {
 	err := c.conn.Close()
 	if err != nil {
 		return err
@@ -151,31 +160,26 @@ func (c *client) ForceClose() error {
 }
 
 func (c *client) Close() error {
-	// TODO(philhofer): make this more graceful
-
 	// already stopped
 	if !atomic.CompareAndSwapUint32(&c.cflag, 1, 0) {
 		return nil
 	}
 
-	writeCmd(c.conn, cmdFin, nil)
+	// if we don't have receivers
+	// pending; then we're safe
+	// to close immediately
 	c.mlock.Lock()
 	pending := len(c.pending)
 	c.mlock.Unlock()
-
-	// if we don't have any pending,
-	// then no need to deadline; no one
-	// can begin writing ones we have set
-	// cflag to 0
 	if pending == 0 {
-		return c.ForceClose()
+		return c.forceClose()
 	}
 
 	// we have pending conns; deadline them
 	c.conn.SetWriteDeadline(time.Now())
 	c.conn.SetReadDeadline(time.Now().Add(1 * time.Second))
 	time.Sleep(1 * time.Second)
-	return c.ForceClose()
+	return c.forceClose()
 }
 
 // readLoop continuously polls
@@ -186,7 +190,7 @@ func (c *client) Close() error {
 func (c *client) readLoop() {
 	var seq uint64
 	var sz uint32
-	var lead [12]byte
+	var lead [13]byte
 	bwr := bufio.NewReader(c.conn)
 
 	for {
@@ -207,21 +211,26 @@ func (c *client) readLoop() {
 		}
 
 		seq = binary.BigEndian.Uint64(lead[0:8])
-		sz = binary.BigEndian.Uint32(lead[8:12])
+		frame := fType(lead[8])
+		sz = binary.BigEndian.Uint32(lead[9:13])
 		if sz > maxFRAMESIZE {
 			log.Printf("synapse client: server sent response greater than %d bytes; closing connection", maxFRAMESIZE)
 			c.conn.Close()
 			return
 		}
 
-		// handle command
-		if seq == 0 {
-			readCmdClient(c, c.conn, bwr, sz)
+		// only accept fCMD and fRES frames;
+		// they are routed to waiters
+		// precisely the same way
+		if frame != fCMD && frame != fRES {
+			// ignore
+			c.conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+			_, _ = io.CopyN(ioutil.Discard, bwr, int64(sz))
+			c.conn.SetReadDeadline(time.Time{})
 			continue
 		}
 
 		isz := int(sz)
-
 		c.mlock.Lock()
 		w, ok := c.pending[seq]
 		if ok {
@@ -229,12 +238,11 @@ func (c *client) readLoop() {
 		}
 		c.mlock.Unlock()
 		if !ok {
-			// TODO: figure out how to handle this better
-			//
 			// discard response...
-			log.Printf("discarding response #%d; no pending waiter", seq)
+			log.Printf("synapse client: discarding response #%d; no pending waiter", seq)
 			c.conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
 			_, _ = io.CopyN(ioutil.Discard, bwr, int64(isz))
+			c.conn.SetReadDeadline(time.Time{})
 			continue
 		}
 
@@ -265,8 +273,46 @@ func (c *client) readLoop() {
 			// clear deadline
 			c.conn.SetReadDeadline(time.Time{})
 		}
+
+		// wakeup waiter
 		w.done <- struct{}{}
 	}
+}
+
+// write a command to the connection - works
+// similarly to standard write()
+func (w *waiter) writeCommand(cmd command, msg []byte) error {
+	if atomic.LoadUint32(&w.parent.cflag) == 0 {
+		return ErrClosed
+	}
+
+	// queue
+	seqn := atomic.AddUint64(&w.parent.csn, 1)
+	w.parent.mlock.Lock()
+	w.parent.pending[seqn] = w
+	w.parent.mlock.Unlock()
+
+	// write buffered msg
+	w.buf.Reset()
+	w.buf.Write(w.lead[:])
+	w.buf.WriteByte(byte(cmd))
+	w.buf.Write(msg)
+
+	// raw request body
+	bts := w.buf.Bytes()
+	olen := len(bts) - 13
+	binary.BigEndian.PutUint64(bts[0:8], seqn)
+	bts[8] = byte(fCMD)
+	binary.BigEndian.PutUint32(bts[9:13], uint32(olen))
+	_, err := w.parent.conn.Write(bts)
+	if err != nil {
+		// dequeue
+		w.parent.mlock.Lock()
+		delete(w.parent.pending, seqn)
+		w.parent.mlock.Unlock()
+		return err
+	}
+	return nil
 }
 
 func (w *waiter) write(method string, in enc.MsgEncoder) error {
@@ -294,11 +340,12 @@ func (w *waiter) write(method string, in enc.MsgEncoder) error {
 
 	// raw request body
 	bts := w.buf.Bytes()
-	olen := len(bts) - 12
+	olen := len(bts) - 13
 
 	// write seq num and size to the front of the body
 	binary.BigEndian.PutUint64(bts[0:8], sn)
-	binary.BigEndian.PutUint32(bts[8:12], uint32(olen))
+	bts[8] = byte(fREQ)
+	binary.BigEndian.PutUint32(bts[9:13], uint32(olen))
 
 	_, err := w.parent.conn.Write(bts)
 	if err != nil {
@@ -347,8 +394,46 @@ func (c *client) Call(method string, in enc.MsgEncoder, out enc.MsgDecoder) erro
 	return err
 }
 
-// just wrap the waitier
-// pointer
+// doCommand executes a command from the client
+func (c *client) sendCommand(cmd command, msg []byte) error {
+	w := popWaiter(c)
+
+	err := w.writeCommand(cmd, msg)
+	if err != nil {
+		return err
+	}
+
+	// wait
+	<-w.done
+
+	// bad response
+	if len(w.in) == 0 {
+		pushWaiter(w)
+		return errors.New("no response CMD code")
+	}
+
+	if command(w.in[0]) == cmdInvalid {
+		pushWaiter(w)
+		return errors.New("command invalid")
+	}
+
+	act := cmdDirectory[command(w.in[0])]
+	if act == nil {
+		pushWaiter(w)
+		return errors.New("unknown CMD code returned")
+	}
+
+	act.Client(c, c.conn, w.in[1:])
+	pushWaiter(w)
+	return nil
+}
+
+// perform the ping command
+func (c *client) ping() error {
+	return c.sendCommand(cmdPing, nil)
+}
+
+// just wrap the waitier pointer
 type async struct {
 	w *waiter
 }
@@ -359,7 +444,14 @@ func (a async) Read(out enc.MsgDecoder) error {
 
 	err := a.w.read(out)
 	pushWaiter(a.w)
+
+	// panic on a second
+	// call to Read; we shouldn't
+	// maintain a reference
+	// to a waiter after pushWaiter()
+	// under any circumstances
 	a.w = nil
+
 	return err
 }
 

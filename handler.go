@@ -19,9 +19,6 @@ type Client interface {
 
 	// Close closes the client.
 	Close() error
-
-	// ForceClose closes the client immediately.
-	ForceClose() error
 }
 
 // AsyncHandler is returned by

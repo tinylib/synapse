@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"github.com/philhofer/msgp/enc"
 	"io"
+	"io/ioutil"
 	"log"
 	"math"
 	"net"
@@ -18,24 +19,31 @@ const maxFRAMESIZE = math.MaxUint16
 
 // FRAMING EXPLANATION:
 //
-// Request:
-//   |   seq   |   len   |   name  |  msg  |
-//   | uint64  |  uint32 |  string | (bts) |
+// Header Frame: (13 bytes)
+//   |   seq   |   type   |   len   |  BODY
+//   |  uint64 |   byte   |  uint32 |  BODY
 //
-// Response:
-//   |   seq   |   len   |   code  |  msg  |
-//   | uint64  |  uint32 |  int64  | (bts) |
 //
-// Command:
-//   |   seq   |   len   |   cmd   |  msg  |
-//   |    0    |  uint32 |  uint32 | (bts) |
+// Body types:
+//
+// Request: (type fREQ)
+//   |  name   |  msg  |
+//   |  string | (bts) |
+//
+// Response: (type fRES)
+//   |   code  |  msg  |
+//   |  int64  | (bts) |
+//
+// Command: (type f)
+//   |  cmd    |  msg  |
+//   |  byte   | (bts) |
 //
 // - 'seq' should increase monotonically per request (and start at 1)
-// - 'seq' is always 0 for commands
 // - 'len' should be the number of bytes *remaining* to be read
 // - 'name' is a messagepack-encoded string
 // - 'code' is a messagepack-encoded signed integer (up to 64 bits)
 // - 'msg' is any messagepack-encoded message
+// - 'cmd' is a command code
 //
 // Clients and servers do asynchronous writes and synchronous reads.
 //
@@ -90,12 +98,12 @@ type connHandler struct {
 func (c *connHandler) connLoop() {
 	brd := bufio.NewReader(c.conn)
 
-	var lead [12]byte
+	var lead [13]byte
 	var seq uint64
 	var sz uint32
 	for {
 		// loop:
-		//  - read seq and sz
+		//  - read seq, type, sz
 		//  - call handler asynchronously
 
 		_, err := io.ReadFull(brd, lead[:])
@@ -108,7 +116,8 @@ func (c *connHandler) connLoop() {
 			return
 		}
 		seq = binary.BigEndian.Uint64(lead[0:8])
-		sz = binary.BigEndian.Uint32(lead[8:12])
+		frame := fType(lead[8])
+		sz = binary.BigEndian.Uint32(lead[9:13])
 
 		// reject frames
 		// larger than 65kB
@@ -118,14 +127,41 @@ func (c *connHandler) connLoop() {
 			c.conn.Close()
 			break
 		}
+		isz := int(sz)
 
-		// handle command
-		if seq == 0 {
-			readCmdServer(c.conn, brd, sz)
+		// handle commands
+		if frame == fCMD {
+			var body []byte // command body; may be nil
+			var cmd command // command byte
+
+			// the 1-byte body case
+			// is pretty common for fCMD
+			if isz == 1 {
+				var bt byte
+				bt, err = brd.ReadByte()
+				cmd = command(bt)
+			} else {
+				body = make([]byte, isz)
+				_, err = io.ReadFull(brd, body)
+				cmd = command(body[0])
+				body = body[1:]
+			}
+			if err != nil {
+				log.Printf("synapse server: fatal: %s", err)
+				c.conn.Close()
+				return
+			}
+			go handleCmd(c, seq, cmd, body)
 			continue
 		}
 
-		isz := int(sz)
+		// the only valid frame
+		// type left is fREQ
+		if frame != fREQ {
+			io.CopyN(ioutil.Discard, brd, int64(sz))
+			continue
+		}
+
 		w := popWrapper(c)
 
 		if cap(w.in) >= isz {
@@ -158,7 +194,7 @@ func (c *connHandler) connLoop() {
 		// trigger handler
 		w.seq = seq
 		w.dc.Reset(bytes.NewReader(w.in))
-		go handleConn(w, c.h) // must write atomically
+		go handleReq(w, c.h)
 	}
 }
 
@@ -166,7 +202,7 @@ func (c *connHandler) connLoop() {
 // necessary to execute a Handler on a request
 type connWrapper struct {
 	seq    uint64
-	lead   [12]byte
+	lead   [13]byte
 	in     []byte       // incoming message
 	out    bytes.Buffer // we need to write to parent.conn atomically, so buffer the whole message
 	req    request
@@ -179,7 +215,7 @@ type connWrapper struct {
 // handleconn sets up the Request and ResponseWriter
 // interfaces and calls the handler.
 // output is written to cw.parent.conn
-func handleConn(cw *connWrapper, h Handler) {
+func handleReq(cw *connWrapper, h Handler) {
 	// clear/reset everything
 	cw.out.Reset()
 	cw.req.dc = cw.dc
@@ -206,17 +242,58 @@ func handleConn(cw *connWrapper, h Handler) {
 	}
 
 	bts := cw.out.Bytes()
-	blen := len(bts) - 12 // length minus frame length
+	blen := len(bts) - 13 // length minus frame length
 	binary.BigEndian.PutUint64(bts[0:8], cw.seq)
-	binary.BigEndian.PutUint32(bts[8:12], uint32(blen))
+	bts[8] = byte(fRES)
+	binary.BigEndian.PutUint32(bts[9:13], uint32(blen))
 
 	// TODO: timeout?
-	// net.Conn takes care of the
-	// locking for us
 	_, err = cw.parent.conn.Write(bts)
 	if err != nil {
 		// TODO: print something more usefull...?
 		log.Printf("synapse server: error writing response: %s", err)
 	}
 	pushWrapper(cw)
+}
+
+func handleCmd(c *connHandler, seq uint64, cmd command, body []byte) {
+	var (
+		buf  bytes.Buffer
+		lead [14]byte // one extra, b/c we always write cmd
+		res  []byte
+	)
+
+	// lead 8 are always seq
+	binary.BigEndian.PutUint64(lead[0:8], seq)
+	lead[8] = byte(fCMD)
+	lead[13] = byte(cmd)
+
+	act := cmdDirectory[cmd]
+	var err error
+	if act == nil {
+		lead[13] = byte(cmdInvalid)
+	} else {
+		res, err = act.Server(c.conn, body)
+		if err != nil {
+			lead[13] = byte(cmdInvalid)
+		}
+	}
+
+	sz := uint32(len(res)) + 1
+	binary.BigEndian.PutUint32(lead[9:13], sz)
+
+	var bts []byte
+
+	if sz == 1 {
+		bts = lead[:]
+	} else {
+		buf.Write(lead[:])
+		buf.Write(res)
+		bts = buf.Bytes()
+	}
+
+	_, err = c.conn.Write(bts)
+	if err != nil {
+		log.Printf("synapse server: error: %s", err)
+	}
 }

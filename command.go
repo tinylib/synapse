@@ -1,7 +1,6 @@
 package synapse
 
 import (
-	"log"
 	"net"
 )
 
@@ -74,13 +73,13 @@ const (
 	cmdPing
 )
 
+// ping is a no-op on both sides
 type ping struct{}
 
-func (p ping) Client(c *client, from net.Conn, _ []byte) {
-	log.Printf("PONG from %s", from.RemoteAddr().String())
+func (p ping) Client(_ *client, _ net.Conn, _ []byte) {
+	return
 }
 
 func (p ping) Server(from net.Conn, _ []byte) ([]byte, error) {
-	log.Printf("PING from %s", from.RemoteAddr().String())
 	return nil, nil
 }

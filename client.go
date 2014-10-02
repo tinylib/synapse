@@ -160,8 +160,6 @@ func (c *client) forceClose() error {
 }
 
 func (c *client) Close() error {
-	// TODO(philhofer): make this more graceful
-
 	// already stopped
 	if !atomic.CompareAndSwapUint32(&c.cflag, 1, 0) {
 		return nil
@@ -240,10 +238,8 @@ func (c *client) readLoop() {
 		}
 		c.mlock.Unlock()
 		if !ok {
-			// TODO: figure out how to handle this better
-			//
 			// discard response...
-			log.Printf("discarding response #%d; no pending waiter", seq)
+			log.Printf("synapse client: discarding response #%d; no pending waiter", seq)
 			c.conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
 			_, _ = io.CopyN(ioutil.Discard, bwr, int64(isz))
 			c.conn.SetReadDeadline(time.Time{})
@@ -277,6 +273,8 @@ func (c *client) readLoop() {
 			// clear deadline
 			c.conn.SetReadDeadline(time.Time{})
 		}
+
+		// wakeup waiter
 		w.done <- struct{}{}
 	}
 }
@@ -331,15 +329,24 @@ func (c *client) sendCommand(cmd command, msg []byte) error {
 
 	// bad response
 	if len(w.in) == 0 {
+		pushWaiter(w)
 		return errors.New("no response CMD code")
 	}
 
+	if command(w.in[0]) == cmdInvalid {
+		pushWaiter(w)
+		return errors.New("command invalid")
+	}
+
 	act := cmdDirectory[command(w.in[0])]
+
 	if act == nil {
+		pushWaiter(w)
 		return errors.New("unknown CMD code returned")
 	}
 
 	act.Client(c, c.conn, w.in[1:])
+	pushWaiter(w)
 	return nil
 }
 

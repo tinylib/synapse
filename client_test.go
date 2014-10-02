@@ -167,3 +167,35 @@ func BenchmarkUnixSocket(b *testing.B) {
 	})
 	b.StopTimer()
 }
+
+func BenchmarkPingRoundtrip(b *testing.B) {
+	l, err := net.Listen("unix", "synapse")
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer func() {
+		l.Close()
+		time.Sleep(1 * time.Millisecond)
+	}()
+	go Serve(l, EchoHandler{})
+	cl, err := DialUnix("synapse")
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer cl.Close()
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	b.SetParallelism(20)
+	b.RunParallel(func(pb *testing.PB) {
+		c := cl.(*client)
+
+		for pb.Next() {
+			err := c.ping()
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	b.StopTimer()
+}

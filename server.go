@@ -259,34 +259,40 @@ func handleReq(cw *connWrapper, h Handler) {
 func handleCmd(c *connHandler, seq uint64, cmd command, body []byte) {
 	var (
 		buf  bytes.Buffer
-		lead [13]byte
+		lead [14]byte // one extra, b/c we always write cmd
 		res  []byte
 	)
 
 	// lead 8 are always seq
 	binary.BigEndian.PutUint64(lead[0:8], seq)
 	lead[8] = byte(fCMD)
+	lead[13] = byte(cmd)
 
 	act := cmdDirectory[cmd]
 	var err error
-	if act == nil || cmd == cmdInvalid {
-		cmd = cmdInvalid
+	if act == nil {
+		lead[13] = byte(cmdInvalid)
 	} else {
 		res, err = act.Server(c.conn, body)
 		if err != nil {
-			cmd = cmdInvalid
+			lead[13] = byte(cmdInvalid)
 		}
 	}
 
 	sz := uint32(len(res)) + 1
 	binary.BigEndian.PutUint32(lead[9:13], sz)
-	buf.Write(lead[:])
-	buf.WriteByte(byte(cmd)) // response=req; or cmdInvalid
-	if len(res) > 0 {
+
+	var bts []byte
+
+	if sz == 1 {
+		bts = lead[:]
+	} else {
+		buf.Write(lead[:])
 		buf.Write(res)
+		bts = buf.Bytes()
 	}
 
-	_, err = c.conn.Write(buf.Bytes())
+	_, err = c.conn.Write(bts)
 	if err != nil {
 		log.Printf("synapse server: error: %s", err)
 	}

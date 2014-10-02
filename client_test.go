@@ -71,6 +71,11 @@ func TestAsyncClient(t *testing.T) {
 
 	defer cl.Close()
 
+	err = cl.(*client).ping()
+	if err != nil {
+		t.Errorf("ping: %s", err)
+	}
+
 	// make 5 requests, then
 	// read 5 responses
 	const concurrent = 5

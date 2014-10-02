@@ -18,7 +18,8 @@ import (
 type command uint32
 
 // an action is the consequence
-// of a command
+// of a command - commands are
+// mapped to actions
 type action interface {
 	// Client is the action carried out on the client side
 	Client(c *client, from net.Conn, msg []byte)
@@ -44,8 +45,7 @@ var cmdDirectory = map[command]action{
 // 'cmd' is the 32-bit command signature
 // 'msg' are optional bytes that have command-specific meaning
 //
-// Commands requests shouldn't block waiting for responses. Also,
-// commands need not have responses.
+// Commands requests shouldn't block waiting for responses.
 
 // list of commands
 const (

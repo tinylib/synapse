@@ -32,7 +32,7 @@ func DialTCP(address string) (Client, error) {
 		return nil, err
 	}
 	conn.SetKeepAlive(true)
-	return newClient(conn), nil
+	return newClient(conn)
 }
 
 // DialUnix creates a new client to the
@@ -47,17 +47,26 @@ func DialUnix(address string) (Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newClient(conn), nil
+	return newClient(conn)
 }
 
-func newClient(c net.Conn) *client {
+func newClient(c net.Conn) (*client, error) {
 	cl := &client{
 		cflag:   1,
 		conn:    c,
 		pending: make(map[uint64]*waiter),
 	}
 	go cl.readLoop()
-	return cl
+
+	// do a ping to check
+	// for sanity
+	err := cl.ping()
+	if err != nil {
+		cl.conn.Close()
+		return nil, err
+	}
+
+	return cl, nil
 }
 
 // IsNotFound returns whether or not

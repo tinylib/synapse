@@ -315,41 +315,6 @@ func (w *waiter) writeCommand(cmd command, msg []byte) error {
 	return nil
 }
 
-// doCommand executes a command from the client
-func (c *client) sendCommand(cmd command, msg []byte) error {
-	w := popWaiter(c)
-
-	err := w.writeCommand(cmd, msg)
-	if err != nil {
-		return err
-	}
-
-	// wait
-	<-w.done
-
-	// bad response
-	if len(w.in) == 0 {
-		pushWaiter(w)
-		return errors.New("no response CMD code")
-	}
-
-	if command(w.in[0]) == cmdInvalid {
-		pushWaiter(w)
-		return errors.New("command invalid")
-	}
-
-	act := cmdDirectory[command(w.in[0])]
-
-	if act == nil {
-		pushWaiter(w)
-		return errors.New("unknown CMD code returned")
-	}
-
-	act.Client(c, c.conn, w.in[1:])
-	pushWaiter(w)
-	return nil
-}
-
 func (w *waiter) write(method string, in enc.MsgEncoder) error {
 
 	// don't write if we're closing
@@ -429,13 +394,46 @@ func (c *client) Call(method string, in enc.MsgEncoder, out enc.MsgDecoder) erro
 	return err
 }
 
+// doCommand executes a command from the client
+func (c *client) sendCommand(cmd command, msg []byte) error {
+	w := popWaiter(c)
+
+	err := w.writeCommand(cmd, msg)
+	if err != nil {
+		return err
+	}
+
+	// wait
+	<-w.done
+
+	// bad response
+	if len(w.in) == 0 {
+		pushWaiter(w)
+		return errors.New("no response CMD code")
+	}
+
+	if command(w.in[0]) == cmdInvalid {
+		pushWaiter(w)
+		return errors.New("command invalid")
+	}
+
+	act := cmdDirectory[command(w.in[0])]
+	if act == nil {
+		pushWaiter(w)
+		return errors.New("unknown CMD code returned")
+	}
+
+	act.Client(c, c.conn, w.in[1:])
+	pushWaiter(w)
+	return nil
+}
+
 // perform the ping command
 func (c *client) ping() error {
 	return c.sendCommand(cmdPing, nil)
 }
 
-// just wrap the waitier
-// pointer
+// just wrap the waitier pointer
 type async struct {
 	w *waiter
 }
@@ -446,7 +444,14 @@ func (a async) Read(out enc.MsgDecoder) error {
 
 	err := a.w.read(out)
 	pushWaiter(a.w)
+
+	// panic on a second
+	// call to Read; we shouldn't
+	// maintain a reference
+	// to a waiter after pushWaiter()
+	// under any circumstances
 	a.w = nil
+
 	return err
 }
 

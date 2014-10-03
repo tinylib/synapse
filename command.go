@@ -2,6 +2,8 @@ package synapse
 
 import (
 	"net"
+	"sync/atomic"
+	"time"
 )
 
 // Commands have request-response
@@ -61,25 +63,48 @@ type action interface {
 // to their respective actions
 var cmdDirectory = map[command]action{
 	cmdPing: ping{},
+	cmdTime: logTime{},
 }
 
 // list of commands
 const (
+	// cmdInvalid is used
+	// to indicate a command
+	// doesn't exist or is
+	// formatted incorrectly
 	cmdInvalid command = iota
 
 	// ping is a
 	// simple ping
 	// command
 	cmdPing
+
+	// timer is a
+	// command to
+	// gather connection
+	// timing information
+	cmdTime
 )
 
 // ping is a no-op on both sides
 type ping struct{}
 
-func (p ping) Client(_ *client, _ net.Conn, _ []byte) {
-	return
+func (p ping) Client(_ *client, _ net.Conn, _ []byte) {}
+
+func (p ping) Server(from net.Conn, _ []byte) ([]byte, error) { return nil, nil }
+
+type logTime struct{}
+
+func (t logTime) Client(cl *client, c net.Conn, res []byte) {
+	var tm time.Time
+	err := tm.UnmarshalBinary(res)
+	if err != nil {
+		return
+	}
+	d := time.Since(tm)
+	atomic.StoreInt64(&cl.rtt, d.Nanoseconds())
 }
 
-func (p ping) Server(from net.Conn, _ []byte) ([]byte, error) {
-	return nil, nil
+func (t logTime) Server(from net.Conn, _ []byte) ([]byte, error) {
+	return time.Now().MarshalBinary()
 }

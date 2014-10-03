@@ -22,6 +22,11 @@ func (r *request) Name() string         { return r.name }
 func (r *request) RemoteAddr() net.Addr { return r.addr }
 
 func (r *request) Decode(m enc.MsgDecoder) error {
-	_, err := m.DecodeFrom(r.dc)
+	var err error
+	if m != nil {
+		_, err = m.DecodeFrom(r.dc)
+		return err
+	}
+	_, err = r.dc.Skip()
 	return err
 }

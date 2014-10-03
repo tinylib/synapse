@@ -41,3 +41,13 @@ func (e EchoHandler) ServeCall(req Request, res ResponseWriter) {
 	}
 	res.Send(&s)
 }
+
+type NopHandler struct{}
+
+func (n NopHandler) ServeCall(req Request, res ResponseWriter) {
+	err := req.Decode(nil)
+	if err != nil {
+		panic(err)
+	}
+	res.Send(nil)
+}

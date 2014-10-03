@@ -129,7 +129,8 @@ func (e ErrStatus) Error() string {
 type client struct {
 	csn     uint64             // sequence number; atomic
 	cflag   uint32             // client state; 1 is open; 0 is closed
-	conn    net.Conn           // TODO: make this multiple conns (pending benchmark data)
+	conn    net.Conn           // TODO: make this multiple conns
+	rtt     int64              // round-trip calculation; nsec; atomic
 	mlock   sync.Mutex         // to protect map access
 	pending map[uint64]*waiter // map seq number to waiting handler
 }
@@ -336,7 +337,13 @@ func (w *waiter) write(method string, in enc.MsgEncoder) error {
 
 	// write body
 	w.en.WriteString(method)
-	in.EncodeTo(w.en)
+
+	// handle nil body
+	if in != nil {
+		in.EncodeTo(w.en)
+	} else {
+		w.en.WriteMapHeader(0)
+	}
 
 	// raw request body
 	bts := w.buf.Bytes()
@@ -368,7 +375,11 @@ func (w *waiter) read(out enc.MsgDecoder) error {
 	if Status(code) != OK {
 		return statusErr(Status(code))
 	}
-	_, err = out.DecodeFrom(w.dc)
+	if out == nil {
+		_, err = w.dc.Skip()
+	} else {
+		_, err = out.DecodeFrom(w.dc)
+	}
 	return err
 }
 
@@ -455,10 +466,11 @@ func (a async) Read(out enc.MsgDecoder) error {
 	return err
 }
 
-func (c *client) Async(method string, in enc.MsgEncoder) (AsyncHandler, error) {
+func (c *client) Async(method string, in enc.MsgEncoder) (AsyncResponse, error) {
 	w := popWaiter(c)
 	err := w.write(method, in)
 	if err != nil {
+		pushWaiter(w)
 		return nil, err
 	}
 	return async{w}, nil

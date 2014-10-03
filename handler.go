@@ -15,7 +15,7 @@ type Client interface {
 	// Async writes the request to the connection
 	// and returns a handler that can be used
 	// to wait for the response.
-	Async(method string, in enc.MsgEncoder) (AsyncHandler, error)
+	Async(method string, in enc.MsgEncoder) (AsyncResponse, error)
 
 	// Close closes the client.
 	Close() error
@@ -23,12 +23,13 @@ type Client interface {
 
 // AsyncHandler is returned by
 // calls to client.Async
-type AsyncHandler interface {
+type AsyncResponse interface {
 	// Read reads the response to the
 	// request into the decoder, returning
 	// any errors encountered. Read blocks
 	// until a response is received. Calling
 	// Read more than once will cause a panic.
+	// Calling Read(nil) discards the response.
 	Read(out enc.MsgDecoder) error
 }
 

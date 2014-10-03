@@ -74,7 +74,7 @@ func TestAsyncClient(t *testing.T) {
 	// make 5 requests, then
 	// read 5 responses
 	const concurrent = 5
-	hlrs := make([]AsyncHandler, concurrent)
+	hlrs := make([]AsyncResponse, concurrent)
 	instr := testString("hello, world!")
 	for i := 0; i < concurrent; i++ {
 		hlrs[i], err = cl.Async("any", &instr)
@@ -95,6 +95,62 @@ func TestAsyncClient(t *testing.T) {
 		}
 	}
 
+}
+
+// test that 'nil' is a safe
+// argument to requests and responses
+func TestNop(t *testing.T) {
+	l, err := net.Listen("tcp", "localhost:7000")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer func() {
+		l.Close()
+		time.Sleep(1 * time.Millisecond)
+	}()
+
+	go Serve(l, NopHandler{})
+
+	cl, err := DialTCP("localhost:7000")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer cl.Close()
+
+	err = cl.Call("any", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTimer(t *testing.T) {
+	l, err := net.Listen("tcp", "localhost:7000")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer func() {
+		l.Close()
+		time.Sleep(1 * time.Millisecond)
+	}()
+
+	go Serve(l, EchoHandler{})
+
+	cl, err := DialTCP("localhost:7000")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer cl.Close()
+
+	err = cl.(*client).sendCommand(cmdTime, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Logf("1/2 RTT is %dns", cl.(*client).rtt)
 }
 
 // benchmarks the test case above

@@ -1,74 +1,20 @@
 package synapse
 
-import (
-	"github.com/philhofer/msgp/enc"
-	"net"
-)
-
-// Client is the interface fulfilled
-// by synapse clients.
-type Client interface {
-	// Call asks the server to perform 'method' on 'in' and
-	// return the response to 'out'.
-	Call(method string, in enc.MsgEncoder, out enc.MsgDecoder) error
-
-	// Async writes the request to the connection
-	// and returns a handler that can be used
-	// to wait for the response.
-	Async(method string, in enc.MsgEncoder) (AsyncResponse, error)
-
-	// Close closes the client.
-	Close() error
-}
-
-// AsyncHandler is returned by
-// calls to client.Async
-type AsyncResponse interface {
-	// Read reads the response to the
-	// request into the decoder, returning
-	// any errors encountered. Read blocks
-	// until a response is received. Calling
-	// Read more than once will cause a panic.
-	// Calling Read(nil) discards the response.
-	Read(out enc.MsgDecoder) error
-}
-
 // Handler is the interface that
 // is satisfied by handlers to
 // a particular method name
 type Handler interface {
+
+	// ServeCall handles a synapse request and
+	// writes a response. It should be safe to
+	// call ServeCall from multiple goroutines.
 	ServeCall(req Request, res ResponseWriter)
 }
 
-// Request is a request for data
-type Request interface {
-	// Name returns the name of
-	// the requested method
-	Name() string
+type handlerFunc func(req Request, res ResponseWriter)
 
-	// RemoteAddr returns the address
-	// that the request originated from
-	RemoteAddr() net.Addr
-
-	// Decode reads the data of the request
-	// into the argument.
-	Decode(enc.MsgDecoder) error
-}
-
-// A ResponseWriter it the interface
-// with which servers write responses
-type ResponseWriter interface {
-	// WriteHeader writes the status
-	// of the response. It is not necessary
-	// to call WriteHeader if the status
-	// is OK. Calls to WriteHeader after
-	// calls to Send() no-op.
-	WriteHeader(Status)
-
-	// Send sends the argument
-	// to the requester. Additional calls
-	// to send no-op.
-	Send(enc.MsgEncoder)
+func (f handlerFunc) ServeCall(req Request, res ResponseWriter) {
+	f(req, res)
 }
 
 // Status represents
@@ -84,3 +30,21 @@ const (
 	NotAuthed
 	ServerError
 )
+
+// Status implements the error interface
+func (s Status) Error() string {
+	switch s {
+	case OK:
+		return ""
+	case NotFound:
+		return "not found"
+	case BadRequest:
+		return "bad request"
+	case NotAuthed:
+		return "not authorized"
+	case ServerError:
+		return "server error"
+	default:
+		return "unknown status"
+	}
+}

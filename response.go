@@ -4,12 +4,27 @@ import (
 	"github.com/philhofer/msgp/enc"
 )
 
+// A ResponseWriter it the interface
+// with which servers write responses
+type ResponseWriter interface {
+	// WriteHeader writes the status
+	// of the response. It is not necessary
+	// to call WriteHeader if the status
+	// is OK. Calls to WriteHeader after
+	// calls to Send() no-op.
+	WriteHeader(Status)
+
+	// Send sends the argument
+	// to the requester. Additional calls
+	// to send no-op.
+	Send(enc.MsgEncoder)
+}
+
 // ResponseWriter implementation
 type response struct {
 	status Status
 	wrote  bool
 	en     *enc.MsgWriter
-	err    error
 }
 
 func (r *response) WriteHeader(s Status) {
@@ -28,14 +43,11 @@ func (r *response) Send(e enc.MsgEncoder) {
 	if r.status == Invalid {
 		r.status = OK
 	}
-	_, r.err = r.en.WriteInt(int(r.status))
-	if r.err != nil {
+	r.en.WriteInt(int(r.status))
+	if e != nil {
+		e.EncodeTo(r.en)
 		return
 	}
-	if e != nil {
-		_, r.err = e.EncodeTo(r.en)
-	} else {
-		_, r.err = r.en.WriteMapHeader(0)
-	}
+	r.en.WriteMapHeader(0)
 	return
 }

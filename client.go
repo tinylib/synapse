@@ -20,6 +20,34 @@ var (
 	ErrClosed = errors.New("client is closed")
 )
 
+// Client is the interface fulfilled
+// by synapse clients.
+type Client interface {
+	// Call asks the server to perform 'method' on 'in' and
+	// return the response to 'out'.
+	Call(method string, in enc.MsgEncoder, out enc.MsgDecoder) error
+
+	// Async writes the request to the connection
+	// and returns a handler that can be used
+	// to wait for the response.
+	Async(method string, in enc.MsgEncoder) (AsyncResponse, error)
+
+	// Close closes the client.
+	Close() error
+}
+
+// AsyncHandler is returned by
+// calls to client.Async
+type AsyncResponse interface {
+	// Read reads the response to the
+	// request into the decoder, returning
+	// any errors encountered. Read blocks
+	// until a response is received. Calling
+	// Read more than once will cause a panic.
+	// Calling Read(nil) discards the response.
+	Read(out enc.MsgDecoder) error
+}
+
 // DialTCP creates a new client to the server
 // located at the provided address.
 func DialTCP(address string) (Client, error) {

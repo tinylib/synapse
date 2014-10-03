@@ -97,6 +97,66 @@ func TestAsyncClient(t *testing.T) {
 
 }
 
+// test UDP, even though we don't officially support it
+func TestUDP(t *testing.T) {
+	local, err := net.ResolveUDPAddr("udp", ":7000")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sconn, err := net.ListenUDP("udp", local)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ch := &pconnHandler{sconn, EchoHandler{}}
+	go ch.pconnLoop()
+
+	defer func() {
+		sconn.Close()
+		time.Sleep(1 * time.Millisecond)
+	}()
+
+	remote, err := net.ResolveUDPAddr("udp", "127.0.0.1:7000")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := net.DialUDP("udp", nil, remote)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cl, err := newClient(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer cl.Close()
+
+	// make 5 requests, then
+	// read 5 responses
+	const concurrent = 5
+	hlrs := make([]AsyncResponse, concurrent)
+	instr := testString("hello, world!")
+	for i := 0; i < concurrent; i++ {
+		hlrs[i], err = cl.Async("any", &instr)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	for i := range hlrs {
+		var outstr testString
+		err = hlrs[i].Read(&outstr)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if outstr != instr {
+			t.Errorf("%q in; %q out", instr, outstr)
+		}
+	}
+}
+
 // test that 'nil' is a safe
 // argument to requests and responses
 func TestNop(t *testing.T) {
@@ -189,7 +249,11 @@ func BenchmarkEcho(b *testing.B) {
 	b.StopTimer()
 }
 
-func BenchmarkUnixSocket(b *testing.B) {
+// this is basically the fastest possible
+// arrangement; we have a no-op (no body)
+// request and response, and we're using
+// unix sockets.
+func BenchmarkUnixNoop(b *testing.B) {
 	l, err := net.Listen("unix", "synapse")
 	if err != nil {
 		b.Fatal(err)
@@ -198,7 +262,7 @@ func BenchmarkUnixSocket(b *testing.B) {
 		l.Close()
 		time.Sleep(1 * time.Millisecond)
 	}()
-	go Serve(l, EchoHandler{})
+	go Serve(l, NopHandler{})
 	cl, err := DialUnix("synapse")
 	if err != nil {
 		b.Fatal(err)
@@ -209,15 +273,10 @@ func BenchmarkUnixSocket(b *testing.B) {
 	b.ReportAllocs()
 	b.SetParallelism(20)
 	b.RunParallel(func(pb *testing.PB) {
-		instr := testString("hello, world!")
-		var outstr testString
 		for pb.Next() {
-			err := cl.Call("any", &instr, &outstr)
+			err := cl.Call("any", nil, nil)
 			if err != nil {
 				b.Fatal(err)
-			}
-			if instr != outstr {
-				b.Fatalf("%q in; %q out", instr, outstr)
 			}
 		}
 	})

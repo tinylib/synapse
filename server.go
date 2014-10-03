@@ -151,7 +151,7 @@ func (c *connHandler) connLoop() {
 				c.conn.Close()
 				return
 			}
-			go handleCmd(c, seq, cmd, body)
+			go handleCmd(c.conn, seq, cmd, body)
 			continue
 		}
 
@@ -162,7 +162,7 @@ func (c *connHandler) connLoop() {
 			continue
 		}
 
-		w := popWrapper(c)
+		w := popWrapper(c.conn)
 
 		if cap(w.in) >= isz {
 			w.in = w.in[0:isz]
@@ -194,38 +194,37 @@ func (c *connHandler) connLoop() {
 		// trigger handler
 		w.seq = seq
 		w.dc.Reset(bytes.NewReader(w.in))
-		go handleReq(w, c.h)
+		go handleReq(w, c.conn.RemoteAddr(), c.h)
 	}
 }
 
 // connWrapper contains all the resources
 // necessary to execute a Handler on a request
 type connWrapper struct {
-	seq    uint64
-	lead   [13]byte
-	in     []byte       // incoming message
-	out    bytes.Buffer // we need to write to parent.conn atomically, so buffer the whole message
-	req    request
-	res    response
-	en     *enc.MsgWriter // wraps bytes.Buffer
-	dc     *enc.MsgReader // wraps 'in'
-	parent *connHandler
+	seq  uint64
+	lead [13]byte
+	in   []byte       // incoming message
+	out  bytes.Buffer // we need to write to parent.conn atomically, so buffer the whole message
+	req  request
+	res  response
+	en   *enc.MsgWriter // wraps bytes.Buffer
+	dc   *enc.MsgReader // wraps 'in'
+	conn io.Writer
 }
 
 // handleconn sets up the Request and ResponseWriter
 // interfaces and calls the handler.
 // output is written to cw.parent.conn
-func handleReq(cw *connWrapper, h Handler) {
+func handleReq(cw *connWrapper, remote net.Addr, h Handler) {
 	// clear/reset everything
 	cw.out.Reset()
 	cw.req.dc = cw.dc
-	cw.req.addr = cw.parent.conn.RemoteAddr()
+	cw.req.addr = remote
 	cw.res.en = cw.en
-	cw.res.err = nil
 	cw.res.wrote = false
 	cw.res.status = Invalid
 
-	// reserve 12 bytes at the beginning
+	// reserve 13 bytes at the beginning
 	cw.out.Write(cw.lead[:])
 
 	var err error
@@ -248,7 +247,7 @@ func handleReq(cw *connWrapper, h Handler) {
 	binary.BigEndian.PutUint32(bts[9:13], uint32(blen))
 
 	// TODO: timeout?
-	_, err = cw.parent.conn.Write(bts)
+	_, err = cw.conn.Write(bts)
 	if err != nil {
 		// TODO: print something more usefull...?
 		log.Printf("synapse server: error writing response: %s", err)
@@ -256,7 +255,7 @@ func handleReq(cw *connWrapper, h Handler) {
 	pushWrapper(cw)
 }
 
-func handleCmd(c *connHandler, seq uint64, cmd command, body []byte) {
+func handleCmd(w io.WriteCloser, seq uint64, cmd command, body []byte) {
 	var (
 		buf  bytes.Buffer
 		lead [14]byte // one extra, b/c we always write cmd
@@ -273,7 +272,7 @@ func handleCmd(c *connHandler, seq uint64, cmd command, body []byte) {
 	if act == nil {
 		lead[13] = byte(cmdInvalid)
 	} else {
-		res, err = act.Server(c.conn, body)
+		res, err = act.Server(w, body)
 		if err != nil {
 			lead[13] = byte(cmdInvalid)
 		}
@@ -292,7 +291,7 @@ func handleCmd(c *connHandler, seq uint64, cmd command, body []byte) {
 		bts = buf.Bytes()
 	}
 
-	_, err = c.conn.Write(bts)
+	_, err = w.Write(bts)
 	if err != nil {
 		log.Printf("synapse server: error: %s", err)
 	}

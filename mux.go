@@ -5,19 +5,25 @@ package synapse
 // requests to the handler that has exactly
 // the same name as the requested method. Otherwise,
 // it will return a Not Found error to the client.
-func NewMux() Mux {
+func NewRouter() Router {
 	return &mux{
 		hlrs: make(map[string]Handler),
 	}
 }
 
 // Mux is a server request multiplexer
-type Mux interface {
-	// Register registers a handler
-	// by 'name'
-	Register(name string, handler Handler)
+type Router interface {
+	// Handle registers a handler. Handle should
+	// not be called after a server has started
+	// serving the router.
+	Handle(name string, handler Handler)
 
-	// Mux implements the Handler interface
+	// HandleFunc registers a handler. HandleFunc
+	// should not be called after a server has
+	// started serving the router.
+	HandleFunc(name string, f func(Request, ResponseWriter))
+
+	// Routers implement the Handler interface
 	ServeCall(req Request, res ResponseWriter)
 }
 
@@ -27,14 +33,19 @@ type mux struct {
 	hlrs map[string]Handler
 }
 
-func (m *mux) Register(name string, handler Handler) {
+func (m *mux) Handle(name string, handler Handler) {
 	m.hlrs[name] = handler
+}
+
+func (m *mux) HandleFunc(name string, f func(Request, ResponseWriter)) {
+	m.hlrs[name] = handlerFunc(f)
 }
 
 func (m *mux) ServeCall(req Request, res ResponseWriter) {
 	h, ok := m.hlrs[req.Name()]
 	if !ok {
 		res.WriteHeader(NotFound)
+		return
 	}
 	h.ServeCall(req, res)
 }

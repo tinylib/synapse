@@ -1,7 +1,7 @@
 package synapse
 
 import (
-	"net"
+	"io"
 	"sync/atomic"
 	"time"
 )
@@ -50,13 +50,13 @@ type command byte
 type action interface {
 	// Client is the action carried out on the client side
 	// when it receives a command response from a server
-	Client(c *client, from net.Conn, msg []byte)
+	Client(c *client, from io.WriteCloser, msg []byte)
 
 	// Sever is the action carried out on the server side. It
 	// should return the reponse message (if any), and any
 	// error encountered. Errors will result in cmdInvalid
 	// sent to the client.
-	Server(from net.Conn, msg []byte) (res []byte, err error)
+	Server(from io.WriteCloser, msg []byte) (res []byte, err error)
 }
 
 // cmdDirectory is a map of all the commands
@@ -89,13 +89,13 @@ const (
 // ping is a no-op on both sides
 type ping struct{}
 
-func (p ping) Client(_ *client, _ net.Conn, _ []byte) {}
+func (p ping) Client(_ *client, _ io.WriteCloser, _ []byte) {}
 
-func (p ping) Server(from net.Conn, _ []byte) ([]byte, error) { return nil, nil }
+func (p ping) Server(_ io.WriteCloser, _ []byte) ([]byte, error) { return nil, nil }
 
 type logTime struct{}
 
-func (t logTime) Client(cl *client, c net.Conn, res []byte) {
+func (t logTime) Client(cl *client, _ io.WriteCloser, res []byte) {
 	var tm time.Time
 	err := tm.UnmarshalBinary(res)
 	if err != nil {
@@ -105,6 +105,6 @@ func (t logTime) Client(cl *client, c net.Conn, res []byte) {
 	atomic.StoreInt64(&cl.rtt, d.Nanoseconds())
 }
 
-func (t logTime) Server(from net.Conn, _ []byte) ([]byte, error) {
+func (t logTime) Server(_ io.WriteCloser, _ []byte) ([]byte, error) {
 	return time.Now().MarshalBinary()
 }

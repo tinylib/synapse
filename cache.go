@@ -2,6 +2,7 @@ package synapse
 
 import (
 	"github.com/philhofer/msgp/enc"
+	"io"
 	"sync"
 )
 
@@ -30,14 +31,15 @@ func init() {
 	}
 }
 
-func popWrapper(c *connHandler) *connWrapper {
+func popWrapper(w io.Writer) *connWrapper {
 	cw := cwPool.Get().(*connWrapper)
-	cw.parent = c
+	cw.conn = w
 	return cw
 }
 
 func pushWrapper(c *connWrapper) {
 	if c != nil {
+		c.conn = nil
 		cwPool.Put(c)
 	}
 }

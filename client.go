@@ -18,6 +18,8 @@ import (
 
 var (
 	ErrClosed = errors.New("client is closed")
+
+	ErrTimeout = errors.New("the server didn't respond in time")
 )
 
 // Client is the interface fulfilled
@@ -60,7 +62,7 @@ func DialTCP(address string) (Client, error) {
 		return nil, err
 	}
 	conn.SetKeepAlive(true)
-	return newClient(conn)
+	return newClient(conn, 1000)
 }
 
 // DialUnix creates a new client to the
@@ -75,10 +77,24 @@ func DialUnix(address string) (Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newClient(conn)
+	return newClient(conn, 200)
 }
 
-func newClient(c net.Conn) (*client, error) {
+// DialUDP creates a new client that
+// operates over UDP
+func DialUDP(address string) (Client, error) {
+	addr, err := net.ResolveUDPAddr("udp", address)
+	if err != nil {
+		return nil, err
+	}
+	conn, err := net.DialUDP("udp", nil, addr)
+	if err != nil {
+		return nil, err
+	}
+	return newClient(conn, 1000)
+}
+
+func newClient(c net.Conn, timeout int64) (*client, error) {
 	cl := &client{
 		cflag:   1,
 		conn:    c,
@@ -93,6 +109,8 @@ func newClient(c net.Conn) (*client, error) {
 		cl.conn.Close()
 		return nil, err
 	}
+
+	go cl.timeoutLoop(timeout)
 
 	return cl, nil
 }
@@ -166,6 +184,8 @@ type client struct {
 type waiter struct {
 	parent *client        // parent *client
 	done   chan struct{}  // for notifying response (length 1)
+	err    error          // response error on wakeup, if applicable
+	etime  int64          // enqueue time, for timeout
 	buf    bytes.Buffer   // output buffer
 	lead   [13]byte       // lead for seq, type, sz
 	in     []byte         // response body
@@ -182,6 +202,7 @@ func (c *client) forceClose() error {
 	// flush all waiters
 	c.mlock.Lock()
 	for _, val := range c.pending {
+		val.err = ErrClosed
 		val.done <- struct{}{}
 	}
 	c.mlock.Unlock()
@@ -304,7 +325,30 @@ func (c *client) readLoop() {
 		}
 
 		// wakeup waiter
+		w.err = nil
 		w.done <- struct{}{}
+	}
+}
+
+// once every 'msec' milliseconds, check
+// that no waiter has been waiting for longer
+// than 'msec'. if so, dequeue it with an error
+func (c *client) timeoutLoop(msec int64) {
+	for {
+		if atomic.LoadUint32(&c.cflag) == 0 {
+			return
+		}
+		time.Sleep(time.Millisecond * time.Duration(msec))
+		now := time.Now().Unix()
+		c.mlock.Lock()
+		for seq, w := range c.pending {
+			if w.etime-now > msec {
+				delete(c.pending, seq)
+				w.err = ErrTimeout
+				w.done <- struct{}{}
+			}
+		}
+		c.mlock.Unlock()
 	}
 }
 
@@ -353,6 +397,9 @@ func (w *waiter) write(method string, in enc.MsgEncoder) error {
 
 	// get sequence number
 	sn := atomic.AddUint64(&w.parent.csn, 1)
+
+	// record enqueue time
+	w.etime = time.Now().Unix()
 
 	// enqueue
 	w.parent.mlock.Lock()
@@ -418,7 +465,14 @@ func (w *waiter) call(method string, in enc.MsgEncoder, out enc.MsgDecoder) erro
 	}
 
 	// wait for response
-	<-w.done
+	_, ok := <-w.done
+	if !ok {
+		return ErrClosed
+	}
+
+	if w.err != nil {
+		return w.err
+	}
 
 	// now we can read
 	return w.read(out)
@@ -444,6 +498,10 @@ func (c *client) sendCommand(cmd command, msg []byte) error {
 
 	// wait
 	<-w.done
+
+	if w.err != nil {
+		return w.err
+	}
 
 	// bad response
 	if len(w.in) == 0 {
@@ -480,6 +538,10 @@ type async struct {
 func (a async) Read(out enc.MsgDecoder) error {
 	// wait
 	<-a.w.done
+
+	if a.w.err != nil {
+		return a.w.err
+	}
 
 	err := a.w.read(out)
 	pushWaiter(a.w)

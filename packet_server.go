@@ -9,6 +9,11 @@ import (
 	"strings"
 )
 
+func ServePacket(c net.PacketConn, h Handler) error {
+	pch := pconnHandler{c, h}
+	return pch.pconnLoop()
+}
+
 // pconn is a shim to wrap
 // the connection
 type pconn struct {
@@ -28,9 +33,9 @@ type pconnHandler struct {
 }
 
 // like connloop, but for packet connections
-func (c pconnHandler) pconnLoop() {
+func (c pconnHandler) pconnLoop() error {
 	// receive buffer
-	var rcv [65535]byte
+	var rcv [16000]byte
 	var msg []byte
 	var seq uint64
 	var sz uint32
@@ -40,9 +45,9 @@ func (c pconnHandler) pconnLoop() {
 			if err != io.EOF && !strings.Contains(err.Error(), "closed") {
 				log.Printf("server: fatal: %s", err)
 				c.conn.Close()
-				break
+				return err
 			}
-			return
+			return nil
 		}
 		msg = rcv[:nr]
 		if len(msg) < 13 {

@@ -233,11 +233,10 @@ func handleReq(cw *connWrapper, remote net.Addr, h Handler) {
 		cw.res.WriteHeader(BadRequest)
 	} else {
 		h.ServeCall(&cw.req, &cw.res)
-	}
-
-	if !cw.res.wrote {
-		cw.res.WriteHeader(OK)
-		cw.res.Send(nil)
+		if !cw.res.wrote {
+			cw.res.WriteHeader(OK)
+			cw.res.Send(nil)
+		}
 	}
 
 	bts := cw.out.Bytes()

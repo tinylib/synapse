@@ -97,7 +97,6 @@ func TestAsyncClient(t *testing.T) {
 
 }
 
-// test UDP, even though we don't officially support it
 func TestUDP(t *testing.T) {
 	local, err := net.ResolveUDPAddr("udp", ":7000")
 	if err != nil {
@@ -109,27 +108,17 @@ func TestUDP(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ch := &pconnHandler{sconn, EchoHandler{}}
-	go ch.pconnLoop()
+	go ServePacket(sconn, EchoHandler{})
 
 	defer func() {
 		sconn.Close()
 		time.Sleep(1 * time.Millisecond)
 	}()
 
-	remote, err := net.ResolveUDPAddr("udp", "127.0.0.1:7000")
+	cl, err := DialUDP("127.0.0.1:7000")
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err := net.DialUDP("udp", nil, remote)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cl, err := newClient(c)
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	defer cl.Close()
 
 	// make 5 requests, then
@@ -277,6 +266,47 @@ func BenchmarkUnixNoop(b *testing.B) {
 			err := cl.Call("any", nil, nil)
 			if err != nil {
 				b.Fatal(err)
+			}
+		}
+	})
+	b.StopTimer()
+}
+
+func BenchmarkUDP(b *testing.B) {
+	local, err := net.ResolveUDPAddr("udp", "127.0.0.1:7000")
+	if err != nil {
+		b.Fatal(err)
+	}
+	l, err := net.ListenUDP("udp", local)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer func() {
+		l.Close()
+		time.Sleep(1 * time.Millisecond)
+	}()
+
+	go ServePacket(l, EchoHandler{})
+
+	cl, err := DialUDP("127.0.0.1")
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer cl.Close()
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	b.SetParallelism(20)
+	b.RunParallel(func(pb *testing.PB) {
+		instr := testString("hello, world!")
+		var outstr testString
+		for pb.Next() {
+			err = cl.Call("any", &instr, &outstr)
+			if err != nil {
+				b.Fatal(err)
+			}
+			if instr != outstr {
+				b.Fatalf("%q in; %q out", instr, outstr)
 			}
 		}
 	})

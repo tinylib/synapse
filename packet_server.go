@@ -9,6 +9,9 @@ import (
 	"strings"
 )
 
+// ServePacket creates a server that serves
+// a packet-oriented connection created by
+// net.ListenPacket().
 func ServePacket(c net.PacketConn, h Handler) error {
 	pch := pconnHandler{c, h}
 	return pch.pconnLoop()
@@ -35,10 +38,11 @@ type pconnHandler struct {
 // like connloop, but for packet connections
 func (c pconnHandler) pconnLoop() error {
 	// receive buffer
-	var rcv [16000]byte
+	var rcv [32000]byte
 	var msg []byte
 	var seq uint64
 	var sz uint32
+
 	for {
 		nr, remote, err := c.conn.ReadFrom(rcv[:])
 		if err != nil {
@@ -74,7 +78,7 @@ func (c pconnHandler) pconnLoop() error {
 			cmd := command(msg[13])
 			if isz > 1 {
 				body = make([]byte, isz-1)
-				copy(body, msg[14:])
+				copy(body[0:], msg[14:])
 			}
 			go handleCmd(pconn{c.conn, remote}, seq, cmd, body)
 			continue
@@ -98,7 +102,7 @@ func (c pconnHandler) pconnLoop() error {
 			w.in = make([]byte, isz)
 		}
 
-		copy(w.in, msg[13:])
+		copy(w.in[0:], msg[13:])
 
 		// trigger handler
 		w.seq = seq

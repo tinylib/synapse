@@ -183,7 +183,7 @@ type client struct {
 
 type waiter struct {
 	parent *client        // parent *client
-	done   chan struct{}  // for notifying response (length 1)
+	done   chan struct{}  // for notifying response (capacity 1)
 	err    error          // response error on wakeup, if applicable
 	etime  int64          // enqueue time, for timeout
 	buf    bytes.Buffer   // output buffer

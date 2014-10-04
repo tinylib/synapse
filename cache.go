@@ -45,14 +45,16 @@ func pushWrapper(c *connWrapper) {
 }
 
 func popWaiter(c *client) *waiter {
-	wt := wtPool.Get().(*waiter)
-	wt.parent = c
-	return wt
+	w := wtPool.Get().(*waiter)
+	w.parent = c
+	w.err = nil
+	return w
 }
 
 func pushWaiter(w *waiter) {
 	if w != nil {
 		w.parent = nil
+		w.err = nil
 		w.buf.Reset()
 		wtPool.Put(w)
 	}

@@ -288,7 +288,7 @@ func BenchmarkUDP(b *testing.B) {
 
 	go ServePacket(l, EchoHandler{})
 
-	cl, err := DialUDP("127.0.0.1")
+	cl, err := DialUDP("127.0.0.1:7000")
 	if err != nil {
 		b.Fatal(err)
 	}

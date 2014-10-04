@@ -121,6 +121,13 @@ func TestUDP(t *testing.T) {
 	}
 	defer cl.Close()
 
+	err = cl.(*client).sendCommand(cmdTime, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Logf("UDP 1/2 RTT is %dns", cl.(*client).rtt)
+
 	// make 5 requests, then
 	// read 5 responses
 	const concurrent = 5
@@ -203,7 +210,7 @@ func TestTimer(t *testing.T) {
 }
 
 // benchmarks the test case above
-func BenchmarkEcho(b *testing.B) {
+func BenchmarkTCPEcho(b *testing.B) {
 	l, err := net.Listen("tcp", "localhost:7000")
 	if err != nil {
 		b.Fatal(err)
@@ -272,7 +279,7 @@ func BenchmarkUnixNoop(b *testing.B) {
 	b.StopTimer()
 }
 
-func BenchmarkUDP(b *testing.B) {
+func BenchmarkUDPEcho(b *testing.B) {
 	local, err := net.ResolveUDPAddr("udp", "127.0.0.1:7000")
 	if err != nil {
 		b.Fatal(err)
@@ -337,6 +344,34 @@ func BenchmarkPingRoundtrip(b *testing.B) {
 
 		for pb.Next() {
 			err := c.ping()
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	b.StopTimer()
+}
+
+func BenchmarkPipeNoop(b *testing.B) {
+	srv, cln := net.Pipe()
+
+	go ServeConn(srv, NopHandler{})
+
+	defer srv.Close()
+
+	cl, err := NewClient(cln)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	defer cln.Close()
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	b.SetParallelism(20)
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			err := cl.Call("any", nil, nil)
 			if err != nil {
 				b.Fatal(err)
 			}

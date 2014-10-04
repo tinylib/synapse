@@ -6,9 +6,7 @@ package synapse
 // the same name as the requested method. Otherwise,
 // it will return a Not Found error to the client.
 func NewRouter() Router {
-	return &mux{
-		hlrs: make(map[string]Handler),
-	}
+	return &mux{hlrs: make(map[string]Handler)}
 }
 
 // Mux is a server request multiplexer

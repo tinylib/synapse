@@ -68,6 +68,14 @@ func Serve(l net.Listener, h Handler) error {
 	return s.serve()
 }
 
+// ServeConn serves an individual network
+// connection. It blocks until the connection
+// is closed.
+func ServeConn(c net.Conn, h Handler) {
+	ch := connHandler{conn: c, h: h}
+	ch.connLoop()
+}
+
 type server struct {
 	l net.Listener
 	h Handler

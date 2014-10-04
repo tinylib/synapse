@@ -94,6 +94,12 @@ func DialUDP(address string) (Client, error) {
 	return newClient(conn, 1000)
 }
 
+// NewClient creates a new client from an
+// existing network connection.
+func NewClient(c net.Conn) (Client, error) {
+	return newClient(c, 1000)
+}
+
 func newClient(c net.Conn, timeout int64) (*client, error) {
 	cl := &client{
 		cflag:   1,

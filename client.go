@@ -325,8 +325,10 @@ func (c *client) readLoop() {
 			c.conn.SetReadDeadline(time.Time{})
 		}
 
-		// wakeup waiter
-		w.err = nil
+		// wakeup waiter w/
+		// error from last
+		// read call (usually nil)
+		w.err = err
 		w.done <- struct{}{}
 	}
 }

@@ -193,7 +193,7 @@ type waiter struct {
 	err    error          // response error on wakeup, if applicable
 	etime  int64          // enqueue time, for timeout
 	buf    bytes.Buffer   // output buffer
-	lead   [13]byte       // lead for seq, type, sz
+	lead   [leadSize]byte // lead for seq, type, sz
 	in     []byte         // response body
 	en     *enc.MsgWriter // wraps buffer
 	dc     *enc.MsgReader // wraps 'in' via bytes.Reader
@@ -245,8 +245,8 @@ func (c *client) Close() error {
 // waiter's input buffer
 func (c *client) readLoop() {
 	var seq uint64
-	var sz uint32
-	var lead [13]byte
+	var sz uint16
+	var lead [leadSize]byte
 	bwr := bufio.NewReader(c.conn)
 
 	for {
@@ -268,12 +268,7 @@ func (c *client) readLoop() {
 
 		seq = binary.BigEndian.Uint64(lead[0:8])
 		frame := fType(lead[8])
-		sz = binary.BigEndian.Uint32(lead[9:13])
-		if sz > maxFRAMESIZE {
-			log.Printf("synapse client: server sent response greater than %d bytes; closing connection", maxFRAMESIZE)
-			c.conn.Close()
-			return
-		}
+		sz = binary.BigEndian.Uint16(lead[9:leadSize])
 
 		// only accept fCMD and fRES frames;
 		// they are routed to waiters
@@ -348,7 +343,7 @@ func (c *client) timeoutLoop(msec int64) {
 		now := time.Now().Unix()
 		c.mlock.Lock()
 		for seq, w := range c.pending {
-			if w.etime-now > msec {
+			if now-w.etime > msec {
 				delete(c.pending, seq)
 				w.err = ErrTimeout
 				w.done <- struct{}{}
@@ -379,10 +374,18 @@ func (w *waiter) writeCommand(cmd command, msg []byte) error {
 
 	// raw request body
 	bts := w.buf.Bytes()
-	olen := len(bts) - 13
+	olen := len(bts) - leadSize
+	if olen > maxMessageSize {
+		// dequeue
+		w.parent.mlock.Lock()
+		delete(w.parent.pending, seqn)
+		w.parent.mlock.Unlock()
+		return errors.New("message too large")
+	}
+
 	binary.BigEndian.PutUint64(bts[0:8], seqn)
 	bts[8] = byte(fCMD)
-	binary.BigEndian.PutUint32(bts[9:13], uint32(olen))
+	binary.BigEndian.PutUint16(bts[9:11], uint16(olen))
 	_, err := w.parent.conn.Write(bts)
 	if err != nil {
 		// dequeue
@@ -428,12 +431,20 @@ func (w *waiter) write(method string, in enc.MsgEncoder) error {
 
 	// raw request body
 	bts := w.buf.Bytes()
-	olen := len(bts) - 13
+	olen := len(bts) - leadSize
+
+	if olen > maxMessageSize {
+		// dequeue
+		w.parent.mlock.Lock()
+		delete(w.parent.pending, sn)
+		w.parent.mlock.Unlock()
+		return errors.New("message too large")
+	}
 
 	// write seq num and size to the front of the body
 	binary.BigEndian.PutUint64(bts[0:8], sn)
 	bts[8] = byte(fREQ)
-	binary.BigEndian.PutUint32(bts[9:13], uint32(olen))
+	binary.BigEndian.PutUint16(bts[9:11], uint16(olen))
 
 	_, err := w.parent.conn.Write(bts)
 	if err != nil {

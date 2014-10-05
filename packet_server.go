@@ -41,7 +41,7 @@ func (c pconnHandler) pconnLoop() error {
 	var rcv [32000]byte
 	var msg []byte
 	var seq uint64
-	var sz uint32
+	var sz uint16
 
 	for {
 		nr, remote, err := c.conn.ReadFrom(rcv[:])
@@ -54,31 +54,24 @@ func (c pconnHandler) pconnLoop() error {
 			return nil
 		}
 		msg = rcv[:nr]
-		if len(msg) < 13 {
+		if len(msg) < 11 {
 			// bad packet...?
 			continue
 		}
 
 		seq = binary.BigEndian.Uint64(msg[0:8])
 		frame := fType(msg[8])
-		sz = binary.BigEndian.Uint32(msg[9:13])
-
-		// reject frames
-		// larger than 65kB
-		if sz > maxFRAMESIZE {
-			continue
-		}
-
+		sz = binary.BigEndian.Uint16(msg[9:11])
 		isz := int(sz)
 
 		// handle commands
 		if frame == fCMD {
 			var body []byte // command body; may be nil
 
-			cmd := command(msg[13])
+			cmd := command(msg[11])
 			if isz > 1 {
 				body = make([]byte, isz-1)
-				copy(body[0:], msg[14:])
+				copy(body[0:], msg[12:])
 			}
 			go handleCmd(pconn{c.conn, remote}, seq, cmd, body)
 			continue
@@ -102,7 +95,7 @@ func (c pconnHandler) pconnLoop() error {
 			w.in = make([]byte, isz)
 		}
 
-		copy(w.in[0:], msg[13:])
+		copy(w.in[0:], msg[11:])
 
 		// trigger handler
 		w.seq = seq

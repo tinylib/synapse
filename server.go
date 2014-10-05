@@ -14,48 +14,16 @@ import (
 	"time"
 )
 
-// maxFRAMESIZE is the maximum size of a message
-const maxFRAMESIZE = math.MaxUint16
+const (
+	// leadSize is the size of a "lead frame"
+	leadSize = 11
 
-// FRAMING EXPLANATION:
-//
-// Header Frame: (13 bytes)
-//   |   seq   |   type   |   len   |  BODY
-//   |  uint64 |   byte   |  uint32 |  BODY
-//
-//
-// Body types:
-//
-// Request: (type fREQ)
-//   |  name   |  msg  |
-//   |  string | (bts) |
-//
-// Response: (type fRES)
-//   |   code  |  msg  |
-//   |  int64  | (bts) |
-//
-// Command: (type f)
-//   |  cmd    |  msg  |
-//   |  byte   | (bts) |
-//
-// - 'seq' should increase monotonically per request (and start at 1)
-// - 'len' should be the number of bytes *remaining* to be read
-// - 'name' is a messagepack-encoded string
-// - 'code' is a messagepack-encoded signed integer (up to 64 bits)
-// - 'msg' is any messagepack-encoded message
-// - 'cmd' is a command code
-//
-// Clients and servers do asynchronous writes and synchronous reads.
-//
+	// maxMessageSize is the maximum size of a message
+	maxMessageSize = math.MaxUint16
+)
+
 // All writes (on either side) need to be atomic; conn.Write() is called exactly once and
 // should contain the entirety of the request (client-side) or response (server-side).
-//
-// Both clients and servers force-close connections if they
-// detect a frame larger than maxFRAMESIZE. This is to make it
-// impossible for one side to ask the other (for whatever reason)
-// to allocate an unreasonable amount of memory. Also, the maximum
-// frame size is the default size of the TCP window, which keeps
-// latency reasonable. (No more than one ACK per write.)
 //
 // In principle, the client can operate on any net.Conn, and the
 // server can operate on any net.Listener.
@@ -87,8 +55,7 @@ func (s *server) serve() error {
 		if err != nil {
 			return err
 		}
-		ch := &connHandler{conn: conn, h: s.h}
-		go ch.connLoop()
+		go ServeConn(conn, s.h)
 	}
 }
 
@@ -106,9 +73,9 @@ type connHandler struct {
 func (c *connHandler) connLoop() {
 	brd := bufio.NewReader(c.conn)
 
-	var lead [13]byte
+	var lead [leadSize]byte
 	var seq uint64
-	var sz uint32
+	var sz uint16
 	for {
 		// loop:
 		//  - read seq, type, sz
@@ -125,16 +92,7 @@ func (c *connHandler) connLoop() {
 		}
 		seq = binary.BigEndian.Uint64(lead[0:8])
 		frame := fType(lead[8])
-		sz = binary.BigEndian.Uint32(lead[9:13])
-
-		// reject frames
-		// larger than 65kB
-		if sz > maxFRAMESIZE {
-			log.Printf("synapse server: client at %s sent a %d-byte frame; force-closing connection...",
-				c.conn.RemoteAddr().String(), sz)
-			c.conn.Close()
-			break
-		}
+		sz = binary.BigEndian.Uint16(lead[9:11])
 		isz := int(sz)
 
 		// handle commands
@@ -210,7 +168,7 @@ func (c *connHandler) connLoop() {
 // necessary to execute a Handler on a request
 type connWrapper struct {
 	seq  uint64
-	lead [13]byte
+	lead [leadSize]byte
 	in   []byte       // incoming message
 	out  bytes.Buffer // we need to write to parent.conn atomically, so buffer the whole message
 	req  request
@@ -248,10 +206,10 @@ func handleReq(cw *connWrapper, remote net.Addr, h Handler) {
 	}
 
 	bts := cw.out.Bytes()
-	blen := len(bts) - 13 // length minus frame length
+	blen := len(bts) - leadSize // length minus frame length
 	binary.BigEndian.PutUint64(bts[0:8], cw.seq)
 	bts[8] = byte(fRES)
-	binary.BigEndian.PutUint32(bts[9:13], uint32(blen))
+	binary.BigEndian.PutUint16(bts[9:11], uint16(blen))
 
 	// TODO: timeout?
 	_, err = cw.conn.Write(bts)
@@ -265,28 +223,28 @@ func handleReq(cw *connWrapper, remote net.Addr, h Handler) {
 func handleCmd(w io.WriteCloser, seq uint64, cmd command, body []byte) {
 	var (
 		buf  bytes.Buffer
-		lead [14]byte // one extra, b/c we always write cmd
+		lead [leadSize + 1]byte // one extra, b/c we always write cmd
 		res  []byte
 	)
 
 	// lead 8 are always seq
 	binary.BigEndian.PutUint64(lead[0:8], seq)
 	lead[8] = byte(fCMD)
-	lead[13] = byte(cmd)
+	lead[leadSize] = byte(cmd)
 
 	act := cmdDirectory[cmd]
 	var err error
 	if act == nil {
-		lead[13] = byte(cmdInvalid)
+		lead[leadSize] = byte(cmdInvalid)
 	} else {
 		res, err = act.Server(w, body)
 		if err != nil {
-			lead[13] = byte(cmdInvalid)
+			lead[leadSize] = byte(cmdInvalid)
 		}
 	}
 
-	sz := uint32(len(res)) + 1
-	binary.BigEndian.PutUint32(lead[9:13], sz)
+	sz := uint16(len(res)) + 1
+	binary.BigEndian.PutUint16(lead[9:11], sz)
 
 	var bts []byte
 

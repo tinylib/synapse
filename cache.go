@@ -18,7 +18,7 @@ func init() {
 	cwPool.New = func() interface{} {
 		cw := &connWrapper{}
 		cw.en = enc.NewEncoder(&cw.out)
-		cw.dc = enc.NewDecoder(nil) // set later
+		cw.dc = enc.NewDecoder(nil)
 		return cw
 	}
 

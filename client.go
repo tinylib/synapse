@@ -3,8 +3,8 @@ package synapse
 import (
 	"bufio"
 	"bytes"
-	"encoding/binary"
 	"errors"
+	"fmt"
 	"github.com/philhofer/msgp/enc"
 	"io"
 	"io/ioutil"
@@ -17,8 +17,14 @@ import (
 )
 
 var (
+	// ErrClosed is returns when a call is attempted
+	// on a closed client
 	ErrClosed = errors.New("client is closed")
 
+	// ErrTimeout is returned when a server
+	// doesn't respond to a request before
+	// the client's timeout scavenger can
+	// free the waiting goroutine
 	ErrTimeout = errors.New("the server didn't respond in time")
 )
 
@@ -38,7 +44,7 @@ type Client interface {
 	Close() error
 }
 
-// AsyncHandler is returned by
+// AsyncResponse is returned by
 // calls to client.Async
 type AsyncResponse interface {
 	// Read reads the response to the
@@ -95,9 +101,11 @@ func DialUDP(address string) (Client, error) {
 }
 
 // NewClient creates a new client from an
-// existing network connection.
-func NewClient(c net.Conn) (Client, error) {
-	return newClient(c, 1000)
+// existing net.Conn. Timeout is the maximum time,
+// in milliseconds, to wait for server responses
+// before sending an error to the caller.
+func NewClient(c net.Conn, timeout int64) (Client, error) {
+	return newClient(c, timeout)
 }
 
 func newClient(c net.Conn, timeout int64) (*client, error) {
@@ -113,69 +121,12 @@ func newClient(c net.Conn, timeout int64) (*client, error) {
 	err := cl.ping()
 	if err != nil {
 		cl.conn.Close()
-		return nil, err
+		return nil, fmt.Errorf("synapse client: attempt to ping the server failed: %s", err)
 	}
 
 	go cl.timeoutLoop(timeout)
 
 	return cl, nil
-}
-
-// IsNotFound returns whether or not
-// the error is a synapse.NotFound error
-func IsNotFound(err error) bool {
-	return isStatus(err, NotFound)
-}
-
-// IsNotAuthed returns whether or not
-// the error is a synapse.NotAuthed error
-func IsNotAuthed(err error) bool {
-	return isStatus(err, NotAuthed)
-}
-
-// IsServerError returns whether or not
-// the error is a synapse.ServerError error
-func IsServerError(err error) bool {
-	return isStatus(err, ServerError)
-}
-
-// IsBadRequest returns whether or not
-// the error is a synapse.IsBadRequest error
-func IsBadRequest(err error) bool {
-	return isStatus(err, BadRequest)
-}
-
-func isStatus(err error, s Status) bool {
-	es, ok := err.(ErrStatus)
-	if ok && es.Status == s {
-		return true
-	}
-	return false
-}
-
-func statusErr(s Status) error { return ErrStatus{s} }
-
-// ErrStatus is the error type returned
-// for status codes that are not "OK"
-type ErrStatus struct {
-	Status Status
-}
-
-func (e ErrStatus) Error() string {
-	switch e.Status {
-	case NotFound:
-		return "Not Found"
-	case NotAuthed:
-		return "Not Authorized"
-	case ServerError:
-		return "Server Error"
-	case Invalid:
-		return "Invalid Status"
-	case BadRequest:
-		return "Bad Request"
-	default:
-		return "<unknown>"
-	}
 }
 
 type client struct {
@@ -245,7 +196,8 @@ func (c *client) Close() error {
 // waiter's input buffer
 func (c *client) readLoop() {
 	var seq uint64
-	var sz uint16
+	var sz int
+	var frame fType
 	var lead [leadSize]byte
 	bwr := bufio.NewReader(c.conn)
 
@@ -266,9 +218,7 @@ func (c *client) readLoop() {
 			break
 		}
 
-		seq = binary.BigEndian.Uint64(lead[0:8])
-		frame := fType(lead[8])
-		sz = binary.BigEndian.Uint16(lead[9:leadSize])
+		seq, frame, sz = readFrame(lead)
 
 		// only accept fCMD and fRES frames;
 		// they are routed to waiters
@@ -281,7 +231,6 @@ func (c *client) readLoop() {
 			continue
 		}
 
-		isz := int(sz)
 		c.mlock.Lock()
 		w, ok := c.pending[seq]
 		if ok {
@@ -292,24 +241,24 @@ func (c *client) readLoop() {
 			// discard response...
 			log.Printf("synapse client: discarding response #%d; no pending waiter", seq)
 			c.conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
-			_, _ = io.CopyN(ioutil.Discard, bwr, int64(isz))
+			_, _ = io.CopyN(ioutil.Discard, bwr, int64(sz))
 			c.conn.SetReadDeadline(time.Time{})
 			continue
 		}
 
 		// fill the waiters input
 		// buffer and then notify
-		if cap(w.in) >= isz {
-			w.in = w.in[0:isz]
+		if cap(w.in) >= sz {
+			w.in = w.in[0:sz]
 		} else {
-			w.in = make([]byte, isz)
+			w.in = make([]byte, sz)
 		}
 
 		// don't block forever on reading the request body -
 		// if we haven't already buffered the body, we set
 		// a deadline for the next read
 		deadline := false
-		if bwr.Buffered() < isz {
+		if bwr.Buffered() < sz {
 			deadline = true
 			c.conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
 
@@ -385,9 +334,8 @@ func (w *waiter) writeCommand(cmd command, msg []byte) error {
 		return errors.New("message too large")
 	}
 
-	binary.BigEndian.PutUint64(bts[0:8], seqn)
-	bts[8] = byte(fCMD)
-	binary.BigEndian.PutUint16(bts[9:11], uint16(olen))
+	putFrame(bts, seqn, fCMD, olen)
+
 	_, err := w.parent.conn.Write(bts)
 	if err != nil {
 		// dequeue
@@ -443,10 +391,7 @@ func (w *waiter) write(method string, in enc.MsgEncoder) error {
 		return errors.New("message too large")
 	}
 
-	// write seq num and size to the front of the body
-	binary.BigEndian.PutUint64(bts[0:8], sn)
-	bts[8] = byte(fREQ)
-	binary.BigEndian.PutUint16(bts[9:11], uint16(olen))
+	putFrame(bts, sn, fREQ, olen)
 
 	_, err := w.parent.conn.Write(bts)
 	if err != nil {
@@ -467,7 +412,7 @@ func (w *waiter) read(out enc.MsgDecoder) error {
 	w.dc.Reset(bytes.NewReader(w.in))
 	code, _, err = w.dc.ReadInt()
 	if Status(code) != OK {
-		return statusErr(Status(code))
+		return Status(code)
 	}
 	if out == nil {
 		_, err = w.dc.Skip()
@@ -484,10 +429,7 @@ func (w *waiter) call(method string, in enc.MsgEncoder, out enc.MsgDecoder) erro
 	}
 
 	// wait for response
-	_, ok := <-w.done
-	if !ok {
-		return ErrClosed
-	}
+	<-w.done
 
 	if w.err != nil {
 		return w.err

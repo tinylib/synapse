@@ -1,7 +1,14 @@
 package synapse
 
 import (
+	"errors"
 	"github.com/philhofer/msgp/enc"
+)
+
+var (
+	// ErrTooLarge is returned when the message
+	// size is larger than 65535 bytes.
+	ErrTooLarge = errors.New("message body too large")
 )
 
 // A ResponseWriter it the interface
@@ -16,8 +23,10 @@ type ResponseWriter interface {
 
 	// Send sends the argument
 	// to the requester. Additional calls
-	// to send no-op.
-	Send(enc.MsgEncoder)
+	// to send no-op. Send will error if the
+	// encoder errors or the message size
+	// is too large.
+	Send(enc.MsgEncoder) error
 }
 
 // ResponseWriter implementation
@@ -35,19 +44,30 @@ func (r *response) WriteHeader(s Status) {
 	return
 }
 
-func (r *response) Send(e enc.MsgEncoder) {
+func (r *response) Send(e enc.MsgEncoder) error {
 	if r.wrote {
-		return
+		return nil
 	}
 	r.wrote = true
 	if r.status == Invalid {
 		r.status = OK
 	}
-	r.en.WriteInt(int(r.status))
+
+	var nr int
+	var nn int
+	var err error
+	nr, _ = r.en.WriteInt(int(r.status))
 	if e != nil {
-		e.EncodeTo(r.en)
-		return
+		nn, err = e.EncodeTo(r.en)
+		if err != nil {
+			return err
+		}
+		nr += nn
+		if nr+leadSize > maxMessageSize {
+			return ErrTooLarge
+		}
+		return nil
 	}
 	r.en.WriteMapHeader(0)
-	return
+	return nil
 }

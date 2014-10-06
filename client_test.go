@@ -19,8 +19,10 @@ func TestClient(t *testing.T) {
 		l.Close()
 		time.Sleep(1 * time.Millisecond)
 	}()
+	mux := NewRouter()
+	mux.Handle("echo", EchoHandler{})
 
-	go Serve(l, EchoHandler{})
+	go Serve(l, mux)
 
 	cl, err := DialTCP("localhost:7000")
 	if err != nil {
@@ -37,7 +39,7 @@ func TestClient(t *testing.T) {
 		go func() {
 			instr := testString("hello, world!")
 			var outstr testString
-			err := cl.Call("any", &instr, &outstr)
+			err := cl.Call("echo", &instr, &outstr)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -219,7 +221,10 @@ func BenchmarkTCPEcho(b *testing.B) {
 		l.Close()
 		time.Sleep(1 * time.Millisecond)
 	}()
-	go Serve(l, EchoHandler{})
+	mux := NewRouter()
+	mux.Handle("echo", EchoHandler{})
+
+	go Serve(l, mux)
 	cl, err := DialTCP("localhost:7000")
 	if err != nil {
 		b.Fatal(err)
@@ -233,7 +238,7 @@ func BenchmarkTCPEcho(b *testing.B) {
 		instr := testString("hello, world!")
 		var outstr testString
 		for pb.Next() {
-			err = cl.Call("any", &instr, &outstr)
+			err = cl.Call("echo", &instr, &outstr)
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -359,12 +364,12 @@ func BenchmarkPipeNoop(b *testing.B) {
 
 	defer srv.Close()
 
-	cl, err := NewClient(cln)
+	cl, err := NewClient(cln, 100)
 	if err != nil {
 		b.Fatal(err)
 	}
 
-	defer cln.Close()
+	defer cl.Close()
 
 	b.ResetTimer()
 	b.ReportAllocs()

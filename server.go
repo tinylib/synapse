@@ -3,7 +3,6 @@ package synapse
 import (
 	"bufio"
 	"bytes"
-	"encoding/binary"
 	"github.com/philhofer/msgp/enc"
 	"io"
 	"io/ioutil"
@@ -59,6 +58,38 @@ func (s *server) serve() error {
 	}
 }
 
+func readFrame(lead [leadSize]byte) (seq uint64, ft fType, sz int) {
+	seq |= uint64(lead[0]) << 56
+	seq |= uint64(lead[1]) << 48
+	seq |= uint64(lead[2]) << 40
+	seq |= uint64(lead[3]) << 32
+	seq |= uint64(lead[4]) << 24
+	seq |= uint64(lead[5]) << 16
+	seq |= uint64(lead[6]) << 8
+	seq |= uint64(lead[7])
+	ft = fType(lead[8])
+	var usz uint16
+	usz |= uint16(lead[9]) << 8
+	usz |= uint16(lead[10])
+	sz = int(usz)
+	return
+}
+
+func putFrame(bts []byte, seq uint64, ft fType, sz int) {
+	bts[0] = byte(seq >> 56)
+	bts[1] = byte(seq >> 48)
+	bts[2] = byte(seq >> 40)
+	bts[3] = byte(seq >> 32)
+	bts[4] = byte(seq >> 24)
+	bts[5] = byte(seq >> 16)
+	bts[6] = byte(seq >> 8)
+	bts[7] = byte(seq)
+	bts[8] = byte(ft)
+	usz := uint16(sz)
+	bts[9] = byte(usz >> 8)
+	bts[10] = byte(usz)
+}
+
 // connHandler handles network
 // connections and multiplexes requests
 // to connWrappers
@@ -75,7 +106,8 @@ func (c *connHandler) connLoop() {
 
 	var lead [leadSize]byte
 	var seq uint64
-	var sz uint16
+	var sz int
+	var frame fType
 	for {
 		// loop:
 		//  - read seq, type, sz
@@ -90,10 +122,7 @@ func (c *connHandler) connLoop() {
 			}
 			return
 		}
-		seq = binary.BigEndian.Uint64(lead[0:8])
-		frame := fType(lead[8])
-		sz = binary.BigEndian.Uint16(lead[9:11])
-		isz := int(sz)
+		seq, frame, sz = readFrame(lead)
 
 		// handle commands
 		if frame == fCMD {
@@ -102,12 +131,12 @@ func (c *connHandler) connLoop() {
 
 			// the 1-byte body case
 			// is pretty common for fCMD
-			if isz == 1 {
+			if sz == 1 {
 				var bt byte
 				bt, err = brd.ReadByte()
 				cmd = command(bt)
 			} else {
-				body = make([]byte, isz)
+				body = make([]byte, sz)
 				_, err = io.ReadFull(brd, body)
 				cmd = command(body[0])
 				body = body[1:]
@@ -130,17 +159,17 @@ func (c *connHandler) connLoop() {
 
 		w := popWrapper(c.conn)
 
-		if cap(w.in) >= isz {
-			w.in = w.in[0:isz]
+		if cap(w.in) >= sz {
+			w.in = w.in[0:sz]
 		} else {
-			w.in = make([]byte, isz)
+			w.in = make([]byte, sz)
 		}
 
 		// don't block forever here,
 		// deadline if we haven't already
 		// buffered the connection data
 		deadline := false
-		if brd.Buffered() < isz {
+		if brd.Buffered() < sz {
 			deadline = true
 			c.conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
 
@@ -173,8 +202,9 @@ type connWrapper struct {
 	out  bytes.Buffer // we need to write to parent.conn atomically, so buffer the whole message
 	req  request
 	res  response
+	brdr bytes.Reader   // wraps 'in'
 	en   *enc.MsgWriter // wraps bytes.Buffer
-	dc   *enc.MsgReader // wraps 'in'
+	dc   *enc.MsgReader // wraps 'brdr'
 	conn io.Writer
 }
 
@@ -207,9 +237,8 @@ func handleReq(cw *connWrapper, remote net.Addr, h Handler) {
 
 	bts := cw.out.Bytes()
 	blen := len(bts) - leadSize // length minus frame length
-	binary.BigEndian.PutUint64(bts[0:8], cw.seq)
-	bts[8] = byte(fRES)
-	binary.BigEndian.PutUint16(bts[9:11], uint16(blen))
+
+	putFrame(bts, cw.seq, fRES, blen)
 
 	// TODO: timeout?
 	_, err = cw.conn.Write(bts)
@@ -227,9 +256,6 @@ func handleCmd(w io.WriteCloser, seq uint64, cmd command, body []byte) {
 		res  []byte
 	)
 
-	// lead 8 are always seq
-	binary.BigEndian.PutUint64(lead[0:8], seq)
-	lead[8] = byte(fCMD)
 	lead[leadSize] = byte(cmd)
 
 	act := cmdDirectory[cmd]
@@ -243,8 +269,8 @@ func handleCmd(w io.WriteCloser, seq uint64, cmd command, body []byte) {
 		}
 	}
 
-	sz := uint16(len(res)) + 1
-	binary.BigEndian.PutUint16(lead[9:11], sz)
+	sz := len(res) + 1
+	putFrame(lead[:], seq, fCMD, sz)
 
 	var bts []byte
 

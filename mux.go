@@ -1,6 +1,6 @@
 package synapse
 
-// NewMux returns a mux that registers
+// NewRouter returns a mux that registers
 // named handlers. Mux will pass
 // requests to the handler that has exactly
 // the same name as the requested method. Otherwise,
@@ -9,7 +9,8 @@ func NewRouter() Router {
 	return &mux{hlrs: make(map[string]Handler)}
 }
 
-// Mux is a server request multiplexer
+// Router is a server request
+// multiplexer
 type Router interface {
 	// Handle registers a handler. Handle should
 	// not be called after a server has started

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"github.com/philhofer/synapse"
 )
@@ -25,18 +26,16 @@ func main() {
 		return
 	}
 
-	// do some stuff...
-	fmt.Println("Waiting for a response. Would you like a coffee while you wait? (Y/N)")
+	var buf bytes.Buffer
+	out := synapse.JSPipe(&buf)
 
 	// the call to Read blocks
 	// until we get a response
-	var out Num
-	err = res.Read(&out)
+	err = res.Read(out)
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
-	fmt.Println("Too late! We already got a response.")
 
-	fmt.Println("Pi * 2 is", out.Value)
+	fmt.Println(buf.String())
 }

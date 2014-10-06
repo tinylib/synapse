@@ -22,8 +22,8 @@ func (d DoubleHandler) ServeCall(req synapse.Request, res synapse.ResponseWriter
 }
 
 func main() {
-	mux := synapse.NewMux()
-	mux.Register("double", DoubleHandler{})
+	mux := synapse.NewRouter()
+	mux.Handle("double", DoubleHandler{})
 
 	l, err := net.Listen("tcp", "localhost:7000")
 	if err != nil {

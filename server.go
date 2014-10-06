@@ -202,7 +202,6 @@ type connWrapper struct {
 	out  bytes.Buffer // we need to write to parent.conn atomically, so buffer the whole message
 	req  request
 	res  response
-	brdr bytes.Reader   // wraps 'in'
 	en   *enc.MsgWriter // wraps bytes.Buffer
 	dc   *enc.MsgReader // wraps 'brdr'
 	conn io.Writer

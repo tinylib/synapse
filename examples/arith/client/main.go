@@ -1,9 +1,9 @@
 package main
 
 import (
-	"bytes"
 	"fmt"
 	"github.com/philhofer/synapse"
+	"os"
 )
 
 func main() {
@@ -26,16 +26,15 @@ func main() {
 		return
 	}
 
-	var buf bytes.Buffer
-	out := synapse.JSPipe(&buf)
-
 	// the call to Read blocks
-	// until we get a response
-	err = res.Read(out)
+	// until we get a response.
+	// JSPipe sends whatever data
+	// is returned to an io.Writer as
+	// JSON.
+	err = res.Read(synapse.JSPipe(os.Stdout))
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
 
-	fmt.Println(buf.String())
 }

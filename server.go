@@ -217,7 +217,6 @@ func handleReq(cw *connWrapper, remote net.Addr, h Handler) {
 	cw.req.addr = remote
 	cw.res.en = cw.en
 	cw.res.wrote = false
-	cw.res.status = Invalid
 
 	// reserve 13 bytes at the beginning
 	cw.out.Write(cw.lead[:])
@@ -225,11 +224,11 @@ func handleReq(cw *connWrapper, remote net.Addr, h Handler) {
 	var err error
 	cw.req.name, _, err = cw.dc.ReadString()
 	if err != nil {
-		cw.res.WriteHeader(BadRequest)
+		cw.res.Error(BadRequest)
 	} else {
 		h.ServeCall(&cw.req, &cw.res)
+		// if the handler didn't write a body
 		if !cw.res.wrote {
-			cw.res.WriteHeader(OK)
 			cw.res.Send(nil)
 		}
 	}

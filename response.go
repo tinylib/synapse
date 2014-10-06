@@ -14,12 +14,10 @@ var (
 // A ResponseWriter it the interface
 // with which servers write responses
 type ResponseWriter interface {
-	// WriteHeader writes the status
-	// of the response. It is not necessary
-	// to call WriteHeader if the status
-	// is OK. Calls to WriteHeader after
-	// calls to Send() no-op.
-	WriteHeader(Status)
+	// Error writes an error status
+	// to the client. Any following
+	// calls to Error or Send are no-ops.
+	Error(Status)
 
 	// Send sends the argument
 	// to the requester. Additional calls
@@ -31,17 +29,16 @@ type ResponseWriter interface {
 
 // ResponseWriter implementation
 type response struct {
-	status Status
-	wrote  bool
-	en     *enc.MsgWriter
+	wrote bool
+	en    *enc.MsgWriter
 }
 
-func (r *response) WriteHeader(s Status) {
+func (r *response) Error(s Status) {
 	if r.wrote {
 		return
 	}
-	r.status = s
-	return
+	r.wrote = true
+	r.en.WriteInt(int(s))
 }
 
 func (r *response) Send(e enc.MsgEncoder) error {
@@ -49,14 +46,11 @@ func (r *response) Send(e enc.MsgEncoder) error {
 		return nil
 	}
 	r.wrote = true
-	if r.status == Invalid {
-		r.status = OK
-	}
 
 	var nr int
 	var nn int
 	var err error
-	nr, _ = r.en.WriteInt(int(r.status))
+	nr, _ = r.en.WriteInt(int(OK))
 	if e != nil {
 		nn, err = e.EncodeTo(r.en)
 		if err != nil {

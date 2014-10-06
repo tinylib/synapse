@@ -43,7 +43,7 @@ func (m *mux) HandleFunc(name string, f func(Request, ResponseWriter)) {
 func (m *mux) ServeCall(req Request, res ResponseWriter) {
 	h, ok := m.hlrs[req.Name()]
 	if !ok {
-		res.WriteHeader(NotFound)
+		res.Error(NotFound)
 		return
 	}
 	h.ServeCall(req, res)

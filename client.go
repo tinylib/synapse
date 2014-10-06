@@ -411,6 +411,9 @@ func (w *waiter) read(out enc.MsgDecoder) error {
 	)
 	w.dc.Reset(bytes.NewReader(w.in))
 	code, _, err = w.dc.ReadInt()
+	if err != nil {
+		return err
+	}
 	if Status(code) != OK {
 		return Status(code)
 	}

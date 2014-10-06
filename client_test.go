@@ -51,6 +51,17 @@ func TestClient(t *testing.T) {
 	}
 
 	wg.Wait()
+
+	// test for NotFound
+	res, err := cl.Async("doesn't-exist", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = res.Read(nil)
+	if err != NotFound {
+		t.Errorf("got error %q; expected %q", err, NotFound)
+	}
 }
 
 func TestAsyncClient(t *testing.T) {

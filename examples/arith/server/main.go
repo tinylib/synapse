@@ -12,7 +12,7 @@ func main() {
 		var in Num
 		err := req.Decode(&in)
 		if err != nil {
-			res.WriteHeader(synapse.BadRequest)
+			res.Error(synapse.BadRequest)
 			return
 		}
 		var out Num

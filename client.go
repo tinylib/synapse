@@ -26,6 +26,10 @@ var (
 	// the client's timeout scavenger can
 	// free the waiting goroutine
 	ErrTimeout = errors.New("the server didn't respond in time")
+
+	// ErrTooLarge is returned when the message
+	// size is larger than 65,535 bytes.
+	ErrTooLarge = errors.New("message body too large")
 )
 
 // Client is the interface fulfilled

@@ -25,7 +25,11 @@ func (f handlerFunc) ServeCall(req Request, res ResponseWriter) {
 // a response status code
 type Status int
 
-// status codes
+// These are the status
+// codes that can be passed
+// to a ResponseWriter as
+// an error to send to the
+// client.
 const (
 	// these are for
 	// internal use;

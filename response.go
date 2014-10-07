@@ -1,14 +1,7 @@
 package synapse
 
 import (
-	"errors"
 	"github.com/philhofer/msgp/enc"
-)
-
-var (
-	// ErrTooLarge is returned when the message
-	// size is larger than 65,535 bytes.
-	ErrTooLarge = errors.New("message body too large")
 )
 
 // A ResponseWriter is the interface through
@@ -32,8 +25,8 @@ type ResponseWriter interface {
 
 // ResponseWriter implementation
 type response struct {
-	wrote bool
 	en    *enc.MsgWriter
+	wrote bool
 }
 
 func (r *response) Error(s Status) {

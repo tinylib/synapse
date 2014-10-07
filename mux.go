@@ -1,7 +1,7 @@
 package synapse
 
 // NewRouter returns a mux that registers
-// named handlers. Mux will pass
+// named handlers. A router will pass
 // requests to the handler that has exactly
 // the same name as the requested method. Otherwise,
 // it will return `synapse.NotFound` to the client.

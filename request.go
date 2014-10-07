@@ -5,7 +5,9 @@ import (
 	"net"
 )
 
-// Request is a request for data
+// Request is the interface that
+// Handlers use to interact with
+// requests.
 type Request interface {
 	// Name returns the name of
 	// the requested method

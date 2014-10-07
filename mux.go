@@ -4,7 +4,7 @@ package synapse
 // named handlers. Mux will pass
 // requests to the handler that has exactly
 // the same name as the requested method. Otherwise,
-// it will return a Not Found error to the client.
+// it will return `synapse.NotFound` to the client.
 func NewRouter() Router {
 	return &mux{hlrs: make(map[string]Handler)}
 }

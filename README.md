@@ -31,7 +31,8 @@ packet-oriented protocols like UDP can provide pretty substantial throughput gai
 cases over UDP will cause requests and responses to be destroyed by packet congestion. In any case, it is important to consider 
 the mechanics of your transport mechanism when seeking to optimize transaction througput.
 
-With all that being said, it's fairly simple to achieve transaction throughput on the order of hundreds-of-thousands with
+With all that being said, it's fairly simple to achieve transaction throughput on the order of hundreds-of-thousands-per-second with
 only a handful of network connections due to the Synapse wire protocol's out-of-order message processing and Go's lightweight 
-concurrency model. Additionally, both client- and server-side code have been deliberately designed to consume minimal per-request 
+concurrency model. (As of this writing, throughput of a trivial server/handler combo over one unix socket comes in at 312,500 requests 
+per second.) Additionally, both client- and server-side code have been deliberately designed to consume minimal per-request 
 and per-connection resources, particularly heap space.

@@ -38,7 +38,7 @@ type pconnHandler struct {
 // like connloop, but for packet connections
 func (c pconnHandler) pconnLoop() error {
 	// receive buffer
-	var rcv [32000]byte
+	var rcv [maxMessageSize]byte
 	var msg []byte
 	var seq uint64
 	var sz uint16
@@ -47,7 +47,7 @@ func (c pconnHandler) pconnLoop() error {
 		nr, remote, err := c.conn.ReadFrom(rcv[:])
 		if err != nil {
 			if err != io.EOF && !strings.Contains(err.Error(), "closed") {
-				log.Printf("server: fatal: %s", err)
+				log.Printf("synapse server: error reading packet: %s", err)
 				c.conn.Close()
 				return err
 			}

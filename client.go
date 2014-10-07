@@ -414,7 +414,7 @@ func (w *waiter) read(out enc.MsgDecoder) error {
 	if err != nil {
 		return err
 	}
-	if Status(code) != OK {
+	if Status(code) != okStatus {
 		return Status(code)
 	}
 	if out == nil {

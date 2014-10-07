@@ -116,7 +116,7 @@ func (c *connHandler) connLoop() {
 		_, err := io.ReadFull(brd, lead[:])
 		if err != nil {
 			if err != io.EOF && !strings.Contains(err.Error(), "closed") {
-				log.Printf("server: fatal: %s", err)
+				log.Printf("server: closing connection (error): %s", err)
 				c.conn.Close()
 				break
 			}
@@ -142,7 +142,7 @@ func (c *connHandler) connLoop() {
 				body = body[1:]
 			}
 			if err != nil {
-				log.Printf("synapse server: fatal: %s", err)
+				log.Printf("synapse server: closing connection (error): %s", err)
 				c.conn.Close()
 				return
 			}
@@ -176,7 +176,7 @@ func (c *connHandler) connLoop() {
 		}
 		_, err = io.ReadFull(brd, w.in)
 		if err != nil {
-			log.Printf("synapse server: fatal error: %s", err)
+			log.Printf("synapse server: closing connection (error): %s", err)
 			c.conn.Close()
 			break
 		}

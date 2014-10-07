@@ -9,6 +9,15 @@ import (
 // to translate a messagepack object
 // directly into JSON as it is being
 // decoded.
+//
+// For example, you can trivially
+// print the response to a request
+// as JSON to stdout by writing
+// something like the following:
+//
+//	res, _ := client.Async("thing", in)
+//	res.Read(synapse.JSPipe(os.Stdout))
+//
 func JSPipe(w io.Writer) enc.MsgDecoder {
 	return jsp{Writer: w}
 }

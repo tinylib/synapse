@@ -7,12 +7,15 @@ import (
 
 var (
 	// ErrTooLarge is returned when the message
-	// size is larger than 65535 bytes.
+	// size is larger than 65,535 bytes.
 	ErrTooLarge = errors.New("message body too large")
 )
 
-// A ResponseWriter it the interface
-// with which servers write responses
+// A ResponseWriter is the interface through
+// which Handlers write responses. Handlers can
+// either return a body (through Send) or an
+// error (through Error); whichever call is
+// made first wins.
 type ResponseWriter interface {
 	// Error writes an error status
 	// to the client. Any following
@@ -50,7 +53,7 @@ func (r *response) Send(e enc.MsgEncoder) error {
 	var nr int
 	var nn int
 	var err error
-	nr, _ = r.en.WriteInt(int(OK))
+	nr, _ = r.en.WriteInt(int(okStatus))
 	if e != nil {
 		nn, err = e.EncodeTo(r.en)
 		if err != nil {

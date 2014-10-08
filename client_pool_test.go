@@ -103,3 +103,36 @@ func BenchmarkClientPool(b *testing.B) {
 	})
 	b.StopTimer()
 }
+
+func TestClientPoolStats(t *testing.T) {
+	l, err := net.Listen("tcp", "localhost:7000")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		l.Close()
+		time.Sleep(1 * time.Millisecond)
+	}()
+	mux := NewRouter()
+	mux.Handle("echo", EchoHandler{})
+
+	go Serve(l, mux)
+
+	// intentionally dial one bad host
+	cl, err := DialCluster("tcp", "localhost:7000", "localhost:9090")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cl.Close()
+
+	stats := cl.Status()
+
+	if len(stats.Connected) != 1 {
+		t.Errorf("expected 1 connection; found %d", len(stats.Connected))
+	}
+
+	if len(stats.Disconnected) != 1 {
+		t.Errorf("expected 1 bad connection; found %d", len(stats.Disconnected))
+	}
+
+}

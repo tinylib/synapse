@@ -25,9 +25,26 @@ type ClusterClient interface {
 	// Add adds a remote server
 	// to the list of server nodes
 	Add(addr string) error
+
+	// Status returns the current
+	// connection status of the cluster.
+	// (Calls to Status will temporarily
+	// lock access to the client list, so
+	// users should avoid calling it frequently.)
+	Status() *ClusterStatus
+
+	nope()
 }
 
+// DialCluster creates a client out of multiple servers. It tries
+// to maintain connections to the servers by re-dialing them on
+// connection failures and removing problematic nodes from the
+// connection pool. You must supply at least one remote address.
 func DialCluster(network string, addrs ...string) (ClusterClient, error) {
+	if len(addrs) < 1 {
+		return nil, ErrNoClients
+	}
+
 	c := &clusterClient{
 		nwk:     network,
 		remotes: addrs,
@@ -81,6 +98,8 @@ func (c *clusterClient) dialAll() error {
 				errs[idx] = err
 				return
 			}
+			// we can take advantage of resolved DNS, etc.
+			c.remotes[i] = conn.RemoteAddr().String()
 			cl, err := newClient(conn, 1000)
 			if err != nil {
 				errs[idx] = err
@@ -123,6 +142,12 @@ type clusterClient struct {
 	nwk        string     // network type
 	remotes    []string   // remote addr
 	remoteLock sync.Mutex // remote addr list lock
+}
+
+type ClusterStatus struct {
+	Network      string   // "tcp", "unix", etc.
+	Connected    []string // addresses of connected servers
+	Disconnected []string // addresses of disconnected servers
 }
 
 func (c *clusterClient) Call(method string, in enc.MsgEncoder, out enc.MsgDecoder) error {
@@ -184,6 +209,42 @@ func (c *clusterClient) Close() error {
 	c.clients = c.clients[:0]
 	c.Unlock()
 	return nil
+}
+
+func (c *clusterClient) Status() *ClusterStatus {
+	cc := &ClusterStatus{
+		Network: c.nwk,
+	}
+
+	// this is the more "expensive"
+	// lock to acquire, so we'll acquire
+	// it first and then do heavy lifting
+	// in the second (cheap) lock
+	c.Lock()
+	c.remoteLock.Lock()
+	cc.Connected = make([]string, len(c.clients))
+	for i, cl := range c.clients {
+		cc.Connected[i] = cl.conn.RemoteAddr().String()
+	}
+	c.Unlock()
+
+	cc.Disconnected = make([]string, 0, len(c.remotes))
+
+	for _, rem := range c.remotes {
+		dialed := false
+		for _, cn := range cc.Connected {
+			if rem == cn {
+				dialed = true
+				break
+			}
+		}
+		if !dialed {
+			cc.Disconnected = append(cc.Disconnected, rem)
+		}
+	}
+	c.remoteLock.Unlock()
+
+	return cc
 }
 
 // handleErr is responsible for figuring out
@@ -362,3 +423,5 @@ func (c *clusterClient) addRandom() error {
 
 	return c.dial(c.nwk, addr)
 }
+
+func (c *clusterClient) nope() {}

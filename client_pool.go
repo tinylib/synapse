@@ -244,30 +244,19 @@ func (c *clusterClient) remove(n *client) bool {
 // client list to begin with in order to prevent
 // races on re-dialing.
 func (c *clusterClient) redial(n *client) {
-	// remove client; check
-	// to see if other redial
-	// processes beat us to
-	// removal
-	in := c.remove(n)
+	// don't race on removal
+	if c.remove(n) {
+		n.Close()
 
-	// someone else
-	// already removed
-	// the client, and is
-	// presumably re-dialing it
-	if !in {
-		return
-	}
+		log.Printf("synapse cluster: re-dialing %s", n.conn.RemoteAddr())
 
-	n.Close()
-
-	log.Printf("synapse cluster: re-dialing %s", n.conn.RemoteAddr())
-
-	remote := n.conn.RemoteAddr()
-	err := c.dial(remote.Network(), remote.String())
-	if err != nil {
-		log.Printf("synapse cluster: re-dialing node @ %s failed: %s", remote.String(), err)
-	} else {
-		log.Printf("synapse cluster: successfully re-connected to %s", n.conn.RemoteAddr())
+		remote := n.conn.RemoteAddr()
+		err := c.dial(remote.Network(), remote.String())
+		if err != nil {
+			log.Printf("synapse cluster: re-dialing node @ %s failed: %s", remote.String(), err)
+		} else {
+			log.Printf("synapse cluster: successfully re-connected to %s", n.conn.RemoteAddr())
+		}
 	}
 }
 

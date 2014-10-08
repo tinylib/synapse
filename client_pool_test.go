@@ -28,7 +28,7 @@ func TestClientPool(t *testing.T) {
 	}
 	defer cl.Close()
 
-	err = cl.Add("tcp", "localhost:7000")
+	err = cl.Add("localhost:7000")
 	if err != nil {
 		t.Fatal(err)
 	}

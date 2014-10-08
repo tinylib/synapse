@@ -24,55 +24,118 @@ type ClusterClient interface {
 
 	// Add adds a remote server
 	// to the list of server nodes
-	Add(network, addr string) error
+	Add(addr string) error
 }
 
 func DialCluster(network string, addrs ...string) (ClusterClient, error) {
-	c := new(clusterClient)
-	errs := make([]error, len(addrs))
-	wg := new(sync.WaitGroup)
-
-	wg.Add(len(addrs))
-	for i, addr := range addrs {
-		go func(remote string, idx int) {
-			conn, err := net.Dial(network, remote)
-			if err != nil {
-				errs[idx] = err
-				return
-			}
-			nc, err := newClient(conn, 1000)
-			if err != nil {
-				errs[idx] = err
-				return
-			}
-			c.add(nc)
-			errs[idx] = nil
-			wg.Done()
-		}(addr, i)
+	c := &clusterClient{
+		nwk:     network,
+		remotes: addrs,
 	}
-
-	wg.Wait()
-
-	for _, err := range errs {
-		if err != nil {
-			c.Close()
-			return nil, err
-		}
+	err := c.dialAll()
+	if err != nil {
+		c.Close()
+		return nil, err
 	}
-
 	return c, nil
 }
 
+// dialAll dials all of the known
+// connections *if* there are zero
+// clients in the current list. it
+// holds the client list lock for
+// the entirety of the dialing period.
+func (c *clusterClient) dialAll() error {
+	c.Lock()
+
+	// we could have raced
+	// on acquiring the lock,
+	// but we only want one process
+	// trying to re-dial connections
+	if len(c.clients) > 0 {
+		c.Unlock()
+		return nil
+	}
+
+	// temporary lock for growing
+	// the client list
+	addLock := new(sync.Mutex)
+
+	c.remoteLock.Lock()
+
+	if len(c.remotes) == 0 {
+		c.remoteLock.Unlock()
+		c.Unlock()
+		return ErrNoClients
+	}
+
+	errs := make([]error, len(c.remotes))
+	wg := new(sync.WaitGroup)
+	wg.Add(len(c.remotes))
+
+	for i, addr := range c.remotes {
+		go func(idx int, addr string, wg *sync.WaitGroup) {
+			defer wg.Done()
+			conn, err := net.Dial(c.nwk, addr)
+			if err != nil {
+				errs[idx] = err
+				return
+			}
+			cl, err := newClient(conn, 1000)
+			if err != nil {
+				errs[idx] = err
+				return
+			}
+			addLock.Lock()
+			c.clients = append(c.clients, cl)
+			addLock.Unlock()
+			return
+		}(i, addr, wg)
+	}
+
+	wg.Wait()
+	c.remoteLock.Unlock()
+	c.Unlock()
+
+	// we only return an
+	// error if we are unable
+	// to reach *any* of the
+	// servers
+	any := false
+	first := -1
+	for i, err := range errs {
+		if err == nil && !any {
+			any = true
+		} else if first == -1 {
+			first = i
+		}
+	}
+	if !any {
+		return errs[first]
+	}
+	return nil
+}
+
 type clusterClient struct {
-	sync.Mutex           // lock for connections
-	idx        uint64    // round robin counter
-	clients    []*client // connections
+	idx        uint64     // round robin counter
+	sync.Mutex            // lock for connections
+	clients    []*client  // connections
+	nwk        string     // network type
+	remotes    []string   // remote addr
+	remoteLock sync.Mutex // remote addr list lock
 }
 
 func (c *clusterClient) Call(method string, in enc.MsgEncoder, out enc.MsgDecoder) error {
+next:
 	v := c.next()
 	if v == nil {
-		return ErrNoClients
+		// if no clients are present,
+		// we need to dial.
+		err := c.dialAll()
+		if err != nil {
+			return err
+		}
+		goto next
 	}
 	err := v.Call(method, in, out)
 	if err != nil {
@@ -93,8 +156,19 @@ func (c *clusterClient) Async(method string, in enc.MsgEncoder) (AsyncResponse, 
 	return asn, err
 }
 
-func (c *clusterClient) Add(network, addr string) error {
-	return c.dial(network, addr)
+func (c *clusterClient) Add(addr string) error {
+	// dial the server first;
+	// add the node to the remote
+	// list only if we can actually
+	// connect to the node.
+	err := c.dial(c.nwk, addr)
+	if err != nil {
+		return err
+	}
+	c.remoteLock.Lock()
+	c.remotes = append(c.remotes, addr)
+	c.remoteLock.Unlock()
+	return nil
 }
 
 func (c *clusterClient) Close() error {
@@ -273,4 +347,18 @@ func (c *clusterClient) dial(inet, addr string) error {
 	}
 	c.add(cl)
 	return nil
+}
+
+func (c *clusterClient) addRandom() error {
+	c.remoteLock.Lock()
+	l := len(c.remotes)
+	if l == 0 {
+		c.remoteLock.Unlock()
+		return ErrNoClients
+	}
+	this := atomic.AddUint64(&c.idx, 1)
+	addr := c.remotes[this%uint64(l)]
+	c.remoteLock.Unlock()
+
+	return c.dial(c.nwk, addr)
 }

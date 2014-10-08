@@ -22,9 +22,16 @@ func TestClientPool(t *testing.T) {
 
 	go Serve(l, mux)
 
-	cl, err := DialCluster("tcp", "localhost:7000", "localhost:7000")
-
+	cl, err := DialCluster("tcp", "localhost:7000")
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer cl.Close()
+
+	err = cl.Add("tcp", "localhost:7000")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	const concurrent = 5
 	wg := new(sync.WaitGroup)
@@ -72,7 +79,7 @@ func BenchmarkClientPool(b *testing.B) {
 	mux.Handle("echo", EchoHandler{})
 
 	go Serve(l, mux)
-	cl, err := DialCluster("tcp", "localhost:7000", "localhost:7000", "localhost:7000")
+	cl, err := DialCluster("tcp", "localhost:7000", "localhost:7000")
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -80,7 +87,7 @@ func BenchmarkClientPool(b *testing.B) {
 
 	b.ResetTimer()
 	b.ReportAllocs()
-	b.SetParallelism(20)
+	b.SetParallelism(10)
 	b.RunParallel(func(pb *testing.PB) {
 		instr := testString("hello, world!")
 		var outstr testString

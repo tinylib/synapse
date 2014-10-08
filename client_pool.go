@@ -3,9 +3,12 @@ package synapse
 import (
 	"errors"
 	"github.com/philhofer/msgp/enc"
+	"log"
 	"net"
 	"sync"
 	"sync/atomic"
+	"syscall"
+	"time"
 )
 
 var (
@@ -26,38 +29,31 @@ type ClusterClient interface {
 
 func DialCluster(network string, addrs ...string) (ClusterClient, error) {
 	c := new(clusterClient)
-	errs := make(chan error, len(addrs))
+	errs := make([]error, len(addrs))
 	wg := new(sync.WaitGroup)
 
-	for _, addr := range addrs {
-		wg.Add(1)
-		go func(remote string) {
+	wg.Add(len(addrs))
+	for i, addr := range addrs {
+		go func(remote string, idx int) {
 			conn, err := net.Dial(network, remote)
 			if err != nil {
-				errs <- err
+				errs[idx] = err
 				return
 			}
 			nc, err := newClient(conn, 1000)
 			if err != nil {
-				errs <- err
+				errs[idx] = err
 				return
 			}
 			c.add(nc)
-			errs <- nil
+			errs[idx] = nil
 			wg.Done()
-		}(addr)
+		}(addr, i)
 	}
 
-	// we should wait for
-	// every dial to finish,
-	// b/c we may have to close
-	// the client, in which case
-	// we don't want dials
-	// racing on close
 	wg.Wait()
-	close(errs)
 
-	for err := range errs {
+	for _, err := range errs {
 		if err != nil {
 			c.Close()
 			return nil, err
@@ -117,20 +113,89 @@ func (c *clusterClient) Close() error {
 }
 
 // handleErr is responsible for figuring out
-// if an error warrants removing a client
-// from the cluster's client list (bad pipe, etc.)
+// if an error warrants re-dialing a connection
 func (c *clusterClient) handleErr(v *client, err error) {
-	if err == nil {
+
+	// ignore timeouts and user errors
+	// from this package; they don't
+	// indicate connection failure
+	switch err {
+	case nil, ErrTimeout, ErrTooLarge:
+		return
+	case ErrClosed:
+		go c.redial(v)
 		return
 	}
 
-	// TODO: figure out possible network-related
-	// errors and remove the node if it is
-	// behaving poorly. For example:
-	if neterr, ok := err.(net.Error); ok {
-		if !neterr.Temporary() {
-			c.remove(v)
-			v.Close()
+	// ignore protocol-level errors
+	if _, ok := err.(Status); ok {
+		return
+	}
+
+	// most syscall-level errors are
+	// returned as OpErrors by the net pkg
+	if operr, ok := err.(*net.OpError); ok {
+		if _, ok = operr.Err.(syscall.Errno); ok {
+			err = operr.Err
+			goto errno
+		}
+		if !operr.Temporary() {
+			go c.redial(v)
+			return
+		}
+		return
+	}
+
+	// this is the logic for handling
+	// syscall-level errors; it is not
+	// complete or exhaustive
+errno:
+	if errno, ok := err.(syscall.Errno); ok {
+
+		// errors that are "temporary"
+		// - EINTR (interrupted)
+		// - EMFILE (out of file descriptors)
+		// - ECONNRESET (connection reset)
+		// - ECONNABORTED (connection aborted...?)
+		// - EAGAIN (virtually never seen by clients of "net")
+		// - EWOULDBLOCK (see above; POSIX says it may be identical to EAGAIN)
+		// - ETIMEOUT (timeout)
+		if !errno.Temporary() {
+			switch errno {
+
+			// errors for which we do nothing
+			case syscall.EALREADY:
+				return
+
+			// errors for which we permanently drop the remote
+			case syscall.EACCES, syscall.EADDRINUSE, syscall.EADDRNOTAVAIL,
+				syscall.EAFNOSUPPORT, syscall.EBADMSG, syscall.EDQUOT, syscall.EFAULT,
+				syscall.EOPNOTSUPP, syscall.ESOCKTNOSUPPORT:
+				if c.remove(v) {
+					log.Printf("synapse cluster: permanently dropping remote @ %s: %s", v.conn.RemoteAddr(), err)
+				}
+
+			// sleep 3; redial
+			case syscall.EHOSTDOWN, syscall.EHOSTUNREACH:
+				if c.remove(v) {
+					go func(ad net.Addr) {
+						for {
+							log.Printf("synapse cluster: cannot reach host @ %s; redial in 3 seconds", ad)
+							time.Sleep(3 * time.Second)
+							err := c.dial(ad.Network(), ad.String())
+							if err != syscall.EHOSTDOWN && err != syscall.EHOSTUNREACH {
+								log.Printf("synapse cluster: dropping remote @ %s: %s", ad, err)
+								break
+							}
+						}
+					}(v.conn.RemoteAddr())
+				}
+
+			// immediate redial
+			case syscall.EPIPE, syscall.ESHUTDOWN, syscall.ESTALE:
+				go c.redial(v)
+
+			}
 		}
 	}
 }
@@ -156,17 +221,54 @@ func (c *clusterClient) add(n *client) {
 	c.Unlock()
 }
 
-// remove a client from the list (threadsafe); no-op if it isn't there
-func (c *clusterClient) remove(n *client) {
+// remove a client from the list (atomic); return
+// whether or not is was removed so we can determine
+// the winner of races to remove the client
+func (c *clusterClient) remove(n *client) bool {
+	found := false
 	c.Lock()
 	for i, v := range c.clients {
 		if v == n {
 			l := len(c.clients)
 			c.clients, c.clients[i], c.clients[l-1] = c.clients[:l-1], c.clients[l-1], nil
+			found = true
 			break
 		}
 	}
 	c.Unlock()
+	return found
+}
+
+// redial idempotently re-dials a client.
+// redial no-ops if the client isn't in the
+// client list to begin with in order to prevent
+// races on re-dialing.
+func (c *clusterClient) redial(n *client) {
+	// remove client; check
+	// to see if other redial
+	// processes beat us to
+	// removal
+	in := c.remove(n)
+
+	// someone else
+	// already removed
+	// the client, and is
+	// presumably re-dialing it
+	if !in {
+		return
+	}
+
+	n.Close()
+
+	log.Printf("synapse cluster: re-dialing %s", n.conn.RemoteAddr())
+
+	remote := n.conn.RemoteAddr()
+	err := c.dial(remote.Network(), remote.String())
+	if err != nil {
+		log.Printf("synapse cluster: re-dialing node @ %s failed: %s", remote.String(), err)
+	} else {
+		log.Printf("synapse cluster: successfully re-connected to %s", n.conn.RemoteAddr())
+	}
 }
 
 // dial; add client on success (threadsafe)

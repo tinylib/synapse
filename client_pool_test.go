@@ -135,4 +135,31 @@ func TestClientPoolStats(t *testing.T) {
 		t.Errorf("expected 1 bad connection; found %d", len(stats.Disconnected))
 	}
 
+	// now we just carry out the
+	// same test as before; the
+	// pool should have ejected
+	// the bad connection, so we
+	// shouldn't observe any errors
+
+	const concurrent = 5
+	wg := new(sync.WaitGroup)
+	wg.Add(concurrent)
+
+	for i := 0; i < concurrent; i++ {
+		go func() {
+			instr := testString("hello, world!")
+			var outstr testString
+			err := cl.Call("echo", &instr, &outstr)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if instr != outstr {
+				t.Fatalf("%q in; %q out", instr, outstr)
+			}
+			wg.Done()
+		}()
+	}
+
+	wg.Wait()
+
 }

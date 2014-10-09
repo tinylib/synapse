@@ -54,7 +54,7 @@ errno:
 func (c *clusterClient) redialPauseLoop(addr string) {
 	for {
 		time.Sleep(3 * time.Second)
-		err := c.dial(c.nwk, addr)
+		err := c.dial(c.nwk, addr, false)
 		if err == nil {
 			break
 		}
@@ -132,7 +132,7 @@ errno:
 						for {
 							log.Printf("synapse cluster: cannot reach host @ %s; redial in 3 seconds", ad)
 							time.Sleep(3 * time.Second)
-							err := c.dial(ad.Network(), ad.String())
+							err := c.dial(ad.Network(), ad.String(), false)
 							if err != syscall.EHOSTDOWN && err != syscall.EHOSTUNREACH {
 								log.Printf("synapse cluster: dropping remote @ %s: %s", ad, err)
 								break

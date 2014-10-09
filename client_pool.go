@@ -76,6 +76,7 @@ func (c *clusterClient) dialAll() error {
 	// the client list
 	addLock := new(sync.Mutex)
 
+	// lock access to remotes
 	c.remoteLock.Lock()
 
 	if len(c.remotes) == 0 {
@@ -98,11 +99,16 @@ func (c *clusterClient) dialAll() error {
 				errs[idx] = err
 				return
 			}
+
 			// we can take advantage of resolved DNS, etc.
+			// if we don't do this, then Stats() will break,
+			// b/c we compare RemoteAddr(), which is not
+			// necessarily the input address
 			c.remotes[i] = conn.RemoteAddr().String()
+
 			cl, err := newClient(conn, 1000)
 			if err != nil {
-				log.Printf("synapse cluster: error establish sync with %s %s: %s", c.nwk, c.remotes[i], err)
+				log.Printf("synapse cluster: error establishing sync with %s %s: %s", c.nwk, c.remotes[i], err)
 				errs[idx] = err
 				return
 			}
@@ -137,12 +143,12 @@ func (c *clusterClient) dialAll() error {
 }
 
 type clusterClient struct {
-	idx        uint64     // round robin counter
-	sync.Mutex            // lock for connections
-	clients    []*client  // connections
-	nwk        string     // network type
-	remotes    []string   // remote addr
-	remoteLock sync.Mutex // remote addr list lock
+	idx          uint64     // round robin counter
+	sync.RWMutex            // lock for []*clients
+	clients      []*client  // connections
+	nwk          string     // network type ("tcp", "udp", "unix", etc.)
+	remotes      []string   // remote addresses that we can (maybe) connect to
+	remoteLock   sync.Mutex // lock for remotes
 }
 
 // ClusterStatus is the
@@ -187,11 +193,7 @@ func (c *clusterClient) Async(method string, in enc.MsgEncoder) (AsyncResponse, 
 }
 
 func (c *clusterClient) Add(addr string) error {
-	// dial the server first;
-	// add the node to the remote
-	// list only if we can actually
-	// connect to the node.
-	return c.dial(c.nwk, addr)
+	return c.dial(c.nwk, addr, false)
 }
 
 func (c *clusterClient) Close() error {
@@ -218,13 +220,13 @@ func (c *clusterClient) Status() *ClusterStatus {
 	// lock to acquire, so we'll acquire
 	// it first and then do heavy lifting
 	// in the second (cheap) lock
-	c.Lock()
+	c.RLock()
 	c.remoteLock.Lock()
 	cc.Connected = make([]string, len(c.clients))
 	for i, cl := range c.clients {
 		cc.Connected[i] = cl.conn.RemoteAddr().String()
 	}
-	c.Unlock()
+	c.RUnlock()
 
 	cc.Disconnected = make([]string, 0, len(c.remotes))
 
@@ -248,14 +250,14 @@ func (c *clusterClient) Status() *ClusterStatus {
 // acquire a client pointer via round-robin (threadsafe)
 func (c *clusterClient) next() *client {
 	i := atomic.AddUint64(&c.idx, 1)
-	c.Lock()
+	c.RLock()
 	l := len(c.clients)
 	if l == 0 {
 		c.Unlock()
 		return nil
 	}
 	o := c.clients[i%uint64(l)]
-	c.Unlock()
+	c.RUnlock()
 	return o
 }
 
@@ -296,7 +298,7 @@ func (c *clusterClient) redial(n *client) {
 		log.Printf("synapse cluster: re-dialing %s", n.conn.RemoteAddr())
 
 		remote := n.conn.RemoteAddr()
-		err := c.dial(remote.Network(), remote.String())
+		err := c.dial(remote.Network(), remote.String(), true)
 		if err != nil {
 			log.Printf("synapse cluster: re-dialing node @ %s failed: %s", remote.String(), err)
 		} else {
@@ -306,23 +308,27 @@ func (c *clusterClient) redial(n *client) {
 }
 
 // dial; add client and remote
-func (c *clusterClient) dial(inet, addr string) error {
+func (c *clusterClient) dial(inet, addr string, exists bool) error {
 	conn, err := net.Dial(inet, addr)
 	if err != nil {
 		return err
 	}
-	c.remoteLock.Lock()
-	found := false
-	for _, rem := range c.remotes {
-		if rem == conn.RemoteAddr().String() {
-			found = true
-			break
+
+	if !exists {
+		c.remoteLock.Lock()
+		found := false
+		for _, rem := range c.remotes {
+			if rem == conn.RemoteAddr().String() {
+				found = true
+				break
+			}
 		}
+		if !found {
+			c.remotes = append(c.remotes, conn.RemoteAddr().String())
+		}
+		c.remoteLock.Unlock()
 	}
-	if !found {
-		c.remotes = append(c.remotes, conn.RemoteAddr().String())
-	}
-	c.remoteLock.Unlock()
+
 	cl, err := newClient(conn, 1000)
 	if err != nil {
 		return err
@@ -331,6 +337,8 @@ func (c *clusterClient) dial(inet, addr string) error {
 	return nil
 }
 
+// add a new connection to an existing remote
+// TODO: call this on node failure
 func (c *clusterClient) addAnother() error {
 	c.remoteLock.Lock()
 	l := len(c.remotes)
@@ -342,7 +350,7 @@ func (c *clusterClient) addAnother() error {
 	addr := c.remotes[this%uint64(l)]
 	c.remoteLock.Unlock()
 
-	return c.dial(c.nwk, addr)
+	return c.dial(c.nwk, addr, true)
 }
 
 func (c *clusterClient) nope() {}

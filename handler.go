@@ -11,7 +11,9 @@ type Handler interface {
 	// Both the request and response interfaces
 	// become invalid after the call is returned;
 	// no implementation of ServeCall should
-	// maintain a reference to either object.
+	// maintain a reference to either object
+	// after the function returns. Doing so will
+	// result in undefined behavior.
 	ServeCall(req Request, res ResponseWriter)
 }
 

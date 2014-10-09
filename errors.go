@@ -7,6 +7,22 @@ import (
 	"time"
 )
 
+// This file contains the error handlers
+// for dial errors and network i/o errors.
+// The goal here is to determine which
+// errors warrant permanently dropping
+// a connection vs. continually re-dialing.
+
+const (
+	// starting redial wait, in seconds
+	startWait = 3 * time.Second
+
+	// maximum redial wait, in seconds;
+	// after backoff reaches this point,
+	// we drop the connection permanently
+	maxWait = 600 * time.Second
+)
+
 // handleDialError determines whether or not
 // it should continue to dial the remote address or
 // drop it permanently. doing nothing ignores the error.
@@ -26,21 +42,21 @@ func (c *clusterClient) handleDialError(addr string, err error) {
 		}
 	}
 
+	// TODO: validate that these are
+	// actually the responses we want
+	// to have under these conditions.
 errno:
 	if errno, ok := err.(syscall.Errno); ok {
 		if !errno.Temporary() {
 			switch errno {
-			case syscall.EALREADY:
-				return
+			// we don't need to handle
+			// the "drop permanently" case,
+			// because that is the default behavior.
 
-			case syscall.EACCES, syscall.EADDRINUSE, syscall.EADDRNOTAVAIL,
-				syscall.EAFNOSUPPORT, syscall.EBADMSG, syscall.EDQUOT, syscall.EFAULT,
-				syscall.EOPNOTSUPP, syscall.ESOCKTNOSUPPORT:
-				log.Printf("synapse cluster: permanently dropping remote @ %s %s: %s", c.nwk, addr, err)
-				return
-
-			case syscall.EPIPE, syscall.ESHUTDOWN, syscall.ESTALE, syscall.ETIMEDOUT:
+			// redial w/ backoff
+			case syscall.EPIPE, syscall.ESHUTDOWN, syscall.ESTALE, syscall.ETIMEDOUT, syscall.ECONNREFUSED:
 				go c.redialPauseLoop(addr)
+				return
 
 			}
 		}
@@ -52,13 +68,24 @@ errno:
 // redialPauseLoop is called to wait/loop on dialing
 // a problematic address
 func (c *clusterClient) redialPauseLoop(addr string) {
+	// TODO: smarter backoff
+	//
+	// right now we start at 3s and double until 600s, then break
+
+	wait := startWait
 	for {
-		time.Sleep(3 * time.Second)
+		if wait > maxWait {
+			log.Printf("synapse cluster: permanently dropping remote @ %s %s", c.nwk, addr)
+			return
+		}
+		log.Printf("synapse cluster: redialing %s in %s", addr, wait)
+		time.Sleep(wait)
 		err := c.dial(c.nwk, addr, false)
 		if err == nil {
 			break
 		}
 		log.Printf("synapse cluster: error dialing %s: %s", addr, err)
+		wait *= 2
 	}
 }
 
@@ -113,37 +140,25 @@ errno:
 		if !errno.Temporary() {
 			switch errno {
 
-			// errors for which we do nothing
-			case syscall.EALREADY:
-				return
-
 			// errors for which we permanently drop the remote
+			// TODO: validate
 			case syscall.EACCES, syscall.EADDRINUSE, syscall.EADDRNOTAVAIL,
 				syscall.EAFNOSUPPORT, syscall.EBADMSG, syscall.EDQUOT, syscall.EFAULT,
 				syscall.EOPNOTSUPP, syscall.ESOCKTNOSUPPORT:
 				if c.remove(v) {
 					log.Printf("synapse cluster: permanently dropping remote @ %s: %s", v.conn.RemoteAddr(), err)
 				}
+				v.Close()
+				return
 
-			// sleep 3; redial
-			case syscall.EHOSTDOWN, syscall.EHOSTUNREACH:
+			// redial loop
+			case syscall.EHOSTDOWN, syscall.EHOSTUNREACH, syscall.EPIPE, syscall.ESHUTDOWN:
+
+				// ensure idempotency
 				if c.remove(v) {
-					go func(ad net.Addr) {
-						for {
-							log.Printf("synapse cluster: cannot reach host @ %s; redial in 3 seconds", ad)
-							time.Sleep(3 * time.Second)
-							err := c.dial(ad.Network(), ad.String(), false)
-							if err != syscall.EHOSTDOWN && err != syscall.EHOSTUNREACH {
-								log.Printf("synapse cluster: dropping remote @ %s: %s", ad, err)
-								break
-							}
-						}
-					}(v.conn.RemoteAddr())
+					v.Close()
+					go c.redialPauseLoop(v.conn.RemoteAddr().String())
 				}
-
-			// immediate redial
-			case syscall.EPIPE, syscall.ESHUTDOWN, syscall.ESTALE:
-				go c.redial(v)
 
 			}
 		}

@@ -58,6 +58,6 @@ func (r *response) Send(e enc.MsgEncoder) error {
 		}
 		return nil
 	}
-	r.en.WriteMapHeader(0)
+	r.en.WriteNil()
 	return nil
 }

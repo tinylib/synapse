@@ -261,7 +261,8 @@ func (c *clusterClient) next() *client {
 	return o
 }
 
-// add a client to the list via append (threadsafe)
+// add a client to the list via append (threadsafe);
+// doesn't add the client to the remote list
 func (c *clusterClient) add(n *client) {
 	c.Lock()
 	c.clients = append(c.clients, n)
@@ -308,12 +309,19 @@ func (c *clusterClient) redial(n *client) {
 }
 
 // dial; add client and remote
+// if 'exists' is false, dial checks to see if the
+// address is in the 'remotes' list, and if it isn't there,
+// it inserts it
 func (c *clusterClient) dial(inet, addr string, exists bool) error {
 	conn, err := net.Dial(inet, addr)
 	if err != nil {
 		return err
 	}
 
+	// this is optional b/c
+	// it is *usually* unnecessary
+	// and requires an expensive
+	// operation while holding a lock
 	if !exists {
 		c.remoteLock.Lock()
 		found := false

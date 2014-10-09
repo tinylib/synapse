@@ -15,11 +15,10 @@ type Handler interface {
 	ServeCall(req Request, res ResponseWriter)
 }
 
+// shim for handlers as functions
 type handlerFunc func(req Request, res ResponseWriter)
 
-func (f handlerFunc) ServeCall(req Request, res ResponseWriter) {
-	f(req, res)
-}
+func (f handlerFunc) ServeCall(req Request, res ResponseWriter) { f(req, res) }
 
 // Status represents
 // a response status code

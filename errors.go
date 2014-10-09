@@ -47,21 +47,23 @@ func (c *clusterClient) handleDialError(addr string, err error) {
 	// to have under these conditions.
 errno:
 	if errno, ok := err.(syscall.Errno); ok {
-		if !errno.Temporary() {
-			switch errno {
-			// we don't need to handle
-			// the "drop permanently" case,
-			// because that is the default behavior.
 
-			// redial w/ backoff
-			case syscall.EPIPE, syscall.ESHUTDOWN, syscall.ESTALE, syscall.ETIMEDOUT, syscall.ECONNREFUSED:
-				go c.redialPauseLoop(addr)
-				return
+		// the Temporary() case
+		// is already taken care of, so
+		// we only need to handle
+		// the non-temporary cases
+		switch errno {
 
-			}
+		// redial w/ backoff
+		case syscall.EPIPE, syscall.ESHUTDOWN, syscall.ESTALE, syscall.ETIMEDOUT, syscall.ECONNREFUSED:
+			go c.redialPauseLoop(addr)
+			return
+
 		}
+
 	}
 
+	// if we got here, we're dropping the connection
 	log.Printf("synapse cluster: permanently dropping remote @ %s %s: %s", c.nwk, addr, err)
 }
 
@@ -97,16 +99,20 @@ func (c *clusterClient) handleErr(v *client, err error) {
 	// from this package; they don't
 	// indicate connection failure
 	switch err {
-	case nil, ErrTimeout, ErrTooLarge:
-		return
-	case ErrClosed:
-		go c.redial(v)
+	case nil, ErrTimeout, ErrTooLarge, ErrClosed:
 		return
 	}
 
 	// ignore protocol-level errors
 	if _, ok := err.(Status); ok {
 		return
+	}
+
+	// ignore "temporary" errors
+	if neterr, ok := err.(net.Error); ok {
+		if neterr.Temporary() {
+			return
+		}
 	}
 
 	// most syscall-level errors are
@@ -116,11 +122,6 @@ func (c *clusterClient) handleErr(v *client, err error) {
 			err = operr.Err
 			goto errno
 		}
-		if !operr.Temporary() {
-			go c.redial(v)
-			return
-		}
-		return
 	}
 
 	// this is the logic for handling
@@ -129,7 +130,7 @@ func (c *clusterClient) handleErr(v *client, err error) {
 errno:
 	if errno, ok := err.(syscall.Errno); ok {
 
-		// errors that are "temporary"
+		// errors that are "temporary" according to the stdlib:
 		// - EINTR (interrupted)
 		// - EMFILE (out of file descriptors)
 		// - ECONNRESET (connection reset)
@@ -137,30 +138,29 @@ errno:
 		// - EAGAIN (virtually never seen by clients of "net")
 		// - EWOULDBLOCK (see above; POSIX says it may be identical to EAGAIN)
 		// - ETIMEOUT (timeout)
-		if !errno.Temporary() {
-			switch errno {
 
-			// errors for which we permanently drop the remote
-			// TODO: validate
-			case syscall.EACCES, syscall.EADDRINUSE, syscall.EADDRNOTAVAIL,
-				syscall.EAFNOSUPPORT, syscall.EBADMSG, syscall.EDQUOT, syscall.EFAULT,
-				syscall.EOPNOTSUPP, syscall.ESOCKTNOSUPPORT:
-				if c.remove(v) {
-					log.Printf("synapse cluster: permanently dropping remote @ %s: %s", v.conn.RemoteAddr(), err)
-				}
-				v.Close()
-				return
+		switch errno {
 
-			// redial loop
-			case syscall.EHOSTDOWN, syscall.EHOSTUNREACH, syscall.EPIPE, syscall.ESHUTDOWN:
-
-				// ensure idempotency
-				if c.remove(v) {
-					v.Close()
-					go c.redialPauseLoop(v.conn.RemoteAddr().String())
-				}
-
+		// errors for which we permanently drop the remote
+		// TODO: validate
+		case syscall.EACCES, syscall.EADDRNOTAVAIL, syscall.EPROTOTYPE,
+			syscall.EAFNOSUPPORT, syscall.EBADMSG, syscall.EDQUOT, syscall.EFAULT,
+			syscall.EOPNOTSUPP, syscall.ENOSR:
+			if c.remove(v) {
+				log.Printf("synapse cluster: permanently dropping remote @ %s: %s", v.conn.RemoteAddr(), err)
 			}
+			v.Close()
+			return
+
+		// redial loop
+		case syscall.EHOSTDOWN, syscall.EHOSTUNREACH, syscall.EPIPE, syscall.ESHUTDOWN, syscall.EIO, syscall.ENETRESET:
+
+			// ensure idempotency
+			if c.remove(v) {
+				v.Close()
+				go c.redialPauseLoop(v.conn.RemoteAddr().String())
+			}
+
 		}
 	}
 }

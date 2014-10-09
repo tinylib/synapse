@@ -253,7 +253,7 @@ func (c *clusterClient) next() *client {
 	c.RLock()
 	l := len(c.clients)
 	if l == 0 {
-		c.Unlock()
+		c.RUnlock()
 		return nil
 	}
 	o := c.clients[i%uint64(l)]

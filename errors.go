@@ -71,23 +71,24 @@ errno:
 // a problematic address
 func (c *clusterClient) redialPauseLoop(addr string) {
 	// TODO: smarter backoff
-	//
 	// right now we start at 3s and double until 600s, then break
-
+	log.Println("synapse cluster: entering redial loop for", addr)
 	wait := startWait
 	for {
-		if wait > maxWait {
-			log.Printf("synapse cluster: permanently dropping remote @ %s %s", c.nwk, addr)
+		select {
+		case <-c.done:
 			return
+		case <-time.After(wait):
+			err := c.dial(c.nwk, addr, false)
+			if err == nil {
+				break
+			}
+			log.Printf("synapse cluster: error dialing %s: %s", addr, err)
+			wait *= 2
+			if wait > maxWait {
+				log.Printf("synapse cluster: permanently dropping remote @ %s %s", c.nwk, addr)
+			}
 		}
-		log.Printf("synapse cluster: redialing %s in %s", addr, wait)
-		time.Sleep(wait)
-		err := c.dial(c.nwk, addr, false)
-		if err == nil {
-			break
-		}
-		log.Printf("synapse cluster: error dialing %s: %s", addr, err)
-		wait *= 2
 	}
 }
 

@@ -421,9 +421,7 @@ func (w *waiter) read(out enc.MsgDecoder) error {
 	if Status(code) != okStatus {
 		return Status(code)
 	}
-	if out == nil {
-		_, err = w.dc.Skip()
-	} else {
+	if out != nil {
 		_, err = out.DecodeFrom(w.dc)
 	}
 	return err

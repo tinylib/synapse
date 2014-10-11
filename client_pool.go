@@ -44,8 +44,10 @@ func DialCluster(network string, addrs ...string) (ClusterClient, error) {
 	}
 
 	c := &clusterClient{
+		state:   2,
 		nwk:     network,
 		remotes: addrs,
+		done:    make(chan struct{}),
 	}
 	err := c.dialAll()
 	if err != nil {
@@ -143,12 +145,14 @@ func (c *clusterClient) dialAll() error {
 }
 
 type clusterClient struct {
-	idx          uint64     // round robin counter
-	sync.RWMutex            // lock for []*clients
-	clients      []*client  // connections
-	nwk          string     // network type ("tcp", "udp", "unix", etc.)
-	remotes      []string   // remote addresses that we can (maybe) connect to
-	remoteLock   sync.Mutex // lock for remotes
+	idx          uint64        // round robin counter
+	state        uint32        // client state
+	sync.RWMutex               // lock for []*clients
+	clients      []*client     // connections
+	nwk          string        // network type ("tcp", "udp", "unix", etc.)
+	remotes      []string      // remote addresses that we can (maybe) connect to
+	remoteLock   sync.Mutex    // lock for remotes
+	done         chan struct{} // close on close
 }
 
 // ClusterStatus is the
@@ -165,8 +169,9 @@ func (c *clusterClient) Call(method string, in enc.MsgEncoder, out enc.MsgDecode
 next:
 	v := c.next()
 	if v == nil {
-		// if no clients are present,
-		// we need to dial.
+		if atomic.LoadUint32(&c.state) != 2 {
+			return ErrClosed
+		}
 		err := c.dialAll()
 		if err != nil {
 			return err
@@ -181,9 +186,17 @@ next:
 }
 
 func (c *clusterClient) Async(method string, in enc.MsgEncoder) (AsyncResponse, error) {
+next:
 	v := c.next()
 	if v == nil {
-		return nil, ErrNoClients
+		if atomic.LoadUint32(&c.state) != 2 {
+			return nil, ErrClosed
+		}
+		err := c.dialAll()
+		if err != nil {
+			return nil, err
+		}
+		goto next
 	}
 	asn, err := v.Async(method, in)
 	if err != nil {
@@ -193,10 +206,18 @@ func (c *clusterClient) Async(method string, in enc.MsgEncoder) (AsyncResponse, 
 }
 
 func (c *clusterClient) Add(addr string) error {
+	if atomic.LoadUint32(&c.state) != 2 {
+		return ErrClosed
+	}
 	return c.dial(c.nwk, addr, false)
 }
 
 func (c *clusterClient) Close() error {
+	if !atomic.CompareAndSwapUint32(&c.state, 2, 0) {
+		return ErrClosed
+	}
+	close(c.done)
+
 	wg := new(sync.WaitGroup)
 	c.Lock()
 	for _, v := range c.clients {
@@ -206,7 +227,7 @@ func (c *clusterClient) Close() error {
 			wg.Done()
 		}(wg, v)
 	}
-	c.clients = c.clients[:0]
+	c.clients = c.clients[0:]
 	c.Unlock()
 	return nil
 }

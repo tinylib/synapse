@@ -149,8 +149,8 @@ errno:
 			syscall.EOPNOTSUPP, syscall.ENOSR:
 			if c.remove(v) {
 				log.Printf("synapse cluster: permanently dropping remote @ %s: %s", v.conn.RemoteAddr(), err)
+				v.Close()
 			}
-			v.Close()
 			return
 
 		// redial loop

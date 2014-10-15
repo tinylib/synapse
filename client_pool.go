@@ -323,9 +323,9 @@ func (c *clusterClient) redial(n *client) {
 		err := c.dial(remote.Network(), remote.String(), true)
 		if err != nil {
 			log.Printf("synapse cluster: re-dialing node @ %s failed: %s", remote.String(), err)
-		} else {
-			log.Printf("synapse cluster: successfully re-connected to %s", n.conn.RemoteAddr())
+			return
 		}
+		log.Printf("synapse cluster: successfully re-connected to %s", n.conn.RemoteAddr())
 	}
 }
 

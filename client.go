@@ -291,10 +291,10 @@ func (c *client) readLoop() {
 // than 'msec'. if so, dequeue it with an error
 func (c *client) timeoutLoop(msec int64) {
 	for {
+		time.Sleep(time.Millisecond * time.Duration(msec))
 		if atomic.LoadUint32(&c.cflag) == 0 {
 			return
 		}
-		time.Sleep(time.Millisecond * time.Duration(msec))
 		now := time.Now().Unix()
 		c.mlock.Lock()
 		for seq, w := range c.pending {

@@ -37,3 +37,7 @@ func (j jsp) DecodeFrom(dc *enc.MsgReader) (int, error) {
 	n, err := enc.DecodeToJSON(j, dc)
 	return int(n), err
 }
+
+func (j jsp) UnmarshalMsg(b []byte) ([]byte, error) {
+	return enc.UnmarshalAsJSON(j, b)
+}

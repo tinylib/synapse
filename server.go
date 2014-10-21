@@ -188,7 +188,6 @@ func (c *connHandler) connLoop() {
 
 		// trigger handler
 		w.seq = seq
-		w.dc.Reset(bytes.NewReader(w.in))
 		go handleReq(w, c.conn.RemoteAddr(), c.h)
 	}
 }
@@ -203,7 +202,6 @@ type connWrapper struct {
 	req  request
 	res  response
 	en   *enc.MsgWriter // wraps bytes.Buffer
-	dc   *enc.MsgReader // wraps 'brdr'
 	conn io.Writer
 }
 
@@ -213,7 +211,6 @@ type connWrapper struct {
 func handleReq(cw *connWrapper, remote net.Addr, h Handler) {
 	// clear/reset everything
 	cw.out.Reset()
-	cw.req.dc = cw.dc
 	cw.req.addr = remote
 	cw.res.en = cw.en
 	cw.res.wrote = false
@@ -222,7 +219,7 @@ func handleReq(cw *connWrapper, remote net.Addr, h Handler) {
 	cw.out.Write(cw.lead[:])
 
 	var err error
-	cw.req.name, _, err = cw.dc.ReadString()
+	cw.req.name, cw.req.in, err = enc.ReadStringBytes(cw.in)
 	if err != nil {
 		cw.res.Error(BadRequest)
 	} else {

@@ -1,7 +1,6 @@
 package synapse
 
 import (
-	"bytes"
 	"encoding/binary"
 	"io"
 	"log"
@@ -24,7 +23,7 @@ type pconn struct {
 	remote net.Addr
 }
 
-// pconn is an io.Writer that writes the
+// pconn is an conn.Writer that writes the
 // response packet to p.remote
 func (p pconn) Write(b []byte) (int, error) {
 	return p.PacketConn.WriteTo(b, p.remote)
@@ -99,7 +98,6 @@ func (c pconnHandler) pconnLoop() error {
 
 		// trigger handler
 		w.seq = seq
-		w.dc.Reset(bytes.NewReader(w.in))
 		go handleReq(w, remote, c.h)
 	}
 }

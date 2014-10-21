@@ -18,14 +18,12 @@ func init() {
 	cwPool.New = func() interface{} {
 		cw := &connWrapper{}
 		cw.en = enc.NewEncoder(&cw.out)
-		cw.dc = enc.NewDecoder(nil)
 		return cw
 	}
 
 	wtPool.New = func() interface{} {
 		wt := &waiter{}
 		wt.en = enc.NewEncoder(&wt.buf)
-		wt.dc = enc.NewDecoder(nil) // set later
 		wt.done = make(chan struct{}, 1)
 		return wt
 	}

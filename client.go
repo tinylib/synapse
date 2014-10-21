@@ -151,7 +151,6 @@ type waiter struct {
 	lead   [leadSize]byte // lead for seq, type, sz
 	in     []byte         // response body
 	en     *enc.MsgWriter // wraps buffer
-	dc     *enc.MsgReader // wraps 'in' via bytes.Reader
 }
 
 func (c *client) forceClose() error {
@@ -412,9 +411,9 @@ func (w *waiter) read(out enc.MsgDecoder) error {
 	var (
 		code int
 		err  error
+		body []byte
 	)
-	w.dc.Reset(bytes.NewReader(w.in))
-	code, _, err = w.dc.ReadInt()
+	code, body, err = enc.ReadIntBytes(w.in)
 	if err != nil {
 		return err
 	}
@@ -422,7 +421,7 @@ func (w *waiter) read(out enc.MsgDecoder) error {
 		return Status(code)
 	}
 	if out != nil {
-		_, err = out.DecodeFrom(w.dc)
+		_, err = out.UnmarshalMsg(body)
 	}
 	return err
 }

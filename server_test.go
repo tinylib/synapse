@@ -1,6 +1,7 @@
 package synapse
 
 import (
+	"bytes"
 	"github.com/philhofer/msgp/enc"
 	"io"
 )
@@ -13,6 +14,12 @@ func (s *testString) EncodeMsg(w io.Writer) (int, error) {
 
 func (s *testString) EncodeTo(en *enc.MsgWriter) (int, error) {
 	return en.WriteString(string(*s))
+}
+
+func (s *testString) MarshalMsg() ([]byte, error) {
+	var buf bytes.Buffer
+	_, err := s.EncodeTo(enc.NewEncoder(&buf))
+	return buf.Bytes(), err
 }
 
 func (s *testString) DecodeMsg(r io.Reader) (int, error) {
@@ -29,6 +36,15 @@ func (s *testString) DecodeFrom(dc *enc.MsgReader) (int, error) {
 	ss, n, err = dc.ReadString()
 	*s = testString(ss)
 	return n, err
+}
+
+func (s *testString) UnmarshalMsg(b []byte) (o []byte, err error) {
+	var t string
+	t, o, err = enc.ReadStringBytes(b)
+	if err == nil {
+		*s = testString(t)
+	}
+	return
 }
 
 type EchoHandler struct{}

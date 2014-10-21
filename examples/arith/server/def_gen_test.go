@@ -33,13 +33,36 @@ func TestEncodeDecodeNum(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
+
+	buf.Reset()
+	v.EncodeMsg(&buf)
+
+	ls := new(Num)
+	var left []byte
+	left, err = ls.UnmarshalMsg(buf.Bytes())
+	if err != nil {
+		t.Error(err)
+	}
+	if len(left) > 0 {
+		t.Error("bytes left over...")
+	}
+
+	left, err = enc.Skip(buf.Bytes())
+	if err != nil {
+		t.Error(err)
+	}
+	if len(left) > 0 {
+		t.Errorf("bytes left over after skip: %q", left)
+	}
 }
 
 func BenchmarkWriteNum(b *testing.B) {
 	v := new(Num)
 	var buf bytes.Buffer
 	en := enc.NewEncoder(&buf)
+	v.EncodeTo(en)
 	b.ReportAllocs()
+	b.SetBytes(int64(buf.Len()))
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		buf.Reset()
@@ -54,9 +77,28 @@ func BenchmarkReadNum(b *testing.B) {
 	rd := bytes.NewReader(buf.Bytes())
 	dc := enc.NewDecoder(rd)
 	b.ReportAllocs()
+	b.SetBytes(int64(buf.Len()))
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		rd.Seek(0, 0)
-		v.DecodeFrom(dc)
+		_, err := v.DecodeFrom(dc)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkUnmarshalNum(b *testing.B) {
+	v := new(Num)
+	var buf bytes.Buffer
+	v.EncodeMsg(&buf)
+	b.ReportAllocs()
+	b.SetBytes(int64(buf.Len()))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := v.UnmarshalMsg(buf.Bytes())
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
 }

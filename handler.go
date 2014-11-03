@@ -65,7 +65,7 @@ const (
 func (s Status) Error() string {
 	switch s {
 	case okStatus:
-		return ""
+		return "<ok>"
 	case NotFound:
 		return "not found"
 	case BadRequest:

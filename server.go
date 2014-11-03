@@ -3,7 +3,7 @@ package synapse
 import (
 	"bufio"
 	"bytes"
-	"github.com/philhofer/msgp/enc"
+	"github.com/philhofer/msgp/msgp"
 	"io"
 	"io/ioutil"
 	"log"
@@ -196,12 +196,9 @@ func (c *connHandler) connLoop() {
 // necessary to execute a Handler on a request
 type connWrapper struct {
 	seq  uint64
-	lead [leadSize]byte
-	in   []byte       // incoming message
-	out  bytes.Buffer // we need to write to parent.conn atomically, so buffer the whole message
+	in   []byte // incoming message
 	req  request
 	res  response
-	en   *enc.MsgWriter // wraps bytes.Buffer
 	conn io.Writer
 }
 
@@ -210,16 +207,11 @@ type connWrapper struct {
 // output is written to cw.parent.conn
 func handleReq(cw *connWrapper, remote net.Addr, h Handler) {
 	// clear/reset everything
-	cw.out.Reset()
 	cw.req.addr = remote
-	cw.res.en = cw.en
 	cw.res.wrote = false
 
-	// reserve 13 bytes at the beginning
-	cw.out.Write(cw.lead[:])
-
 	var err error
-	cw.req.name, cw.req.in, err = enc.ReadStringBytes(cw.in)
+	cw.req.name, cw.req.in, err = msgp.ReadStringBytes(cw.in)
 	if err != nil {
 		cw.res.Error(BadRequest)
 	} else {
@@ -230,13 +222,10 @@ func handleReq(cw *connWrapper, remote net.Addr, h Handler) {
 		}
 	}
 
-	bts := cw.out.Bytes()
-	blen := len(bts) - leadSize // length minus frame length
+	blen := len(cw.res.out) - leadSize // length minus frame length
+	putFrame(cw.res.out, cw.seq, fRES, blen)
 
-	putFrame(bts, cw.seq, fRES, blen)
-
-	// TODO: timeout?
-	_, err = cw.conn.Write(bts)
+	_, err = cw.conn.Write(cw.res.out)
 	if err != nil {
 		// TODO: print something more usefull...?
 		log.Printf("synapse server: error writing response: %s", err)

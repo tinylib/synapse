@@ -1,7 +1,7 @@
 package synapse
 
 import (
-	"github.com/philhofer/msgp/enc"
+	"github.com/philhofer/msgp/msgp"
 )
 
 // A ResponseWriter is the interface through
@@ -20,13 +20,22 @@ type ResponseWriter interface {
 	// to send no-op. Send will error if the
 	// encoder errors or the message size
 	// is too large.
-	Send(enc.MsgEncoder) error
+	Send(msgp.Marshaler) error
 }
 
 // ResponseWriter implementation
 type response struct {
-	en    *enc.MsgWriter
+	out   []byte
 	wrote bool
+}
+
+func (r *response) resetLead() {
+	// we need to save the lead bytes
+	if cap(r.out) < leadSize {
+		r.out = make([]byte, leadSize, 256)
+	} else {
+		r.out = r.out[0:leadSize]
+	}
 }
 
 func (r *response) Error(s Status) {
@@ -34,30 +43,29 @@ func (r *response) Error(s Status) {
 		return
 	}
 	r.wrote = true
-	r.en.WriteInt(int(s))
+	r.resetLead()
+	r.out = msgp.AppendInt(r.out, int(s))
 }
 
-func (r *response) Send(e enc.MsgEncoder) error {
+func (r *response) Send(msg msgp.Marshaler) error {
 	if r.wrote {
 		return nil
 	}
 	r.wrote = true
 
-	var nr int
-	var nn int
 	var err error
-	nr, _ = r.en.WriteInt(int(okStatus))
-	if e != nil {
-		nn, err = e.EncodeTo(r.en)
+	r.resetLead()
+	r.out = msgp.AppendInt(r.out, int(okStatus))
+	if msg != nil {
+		r.out, err = msg.AppendMsg(r.out)
 		if err != nil {
 			return err
 		}
-		nr += nn
-		if nr+leadSize > maxMessageSize {
+		if len(r.out) > maxMessageSize {
 			return ErrTooLarge
 		}
 		return nil
 	}
-	r.en.WriteNil()
+	r.out = msgp.AppendNil(r.out)
 	return nil
 }

@@ -2,7 +2,7 @@ package synapse
 
 import (
 	"errors"
-	"github.com/philhofer/msgp/enc"
+	"github.com/philhofer/msgp/msgp"
 	"log"
 	"net"
 	"sync"
@@ -165,7 +165,7 @@ type ClusterStatus struct {
 	Disconnected []string // addresses of disconnected servers
 }
 
-func (c *clusterClient) Call(method string, in enc.MsgEncoder, out enc.MsgDecoder) error {
+func (c *clusterClient) Call(method string, in msgp.Marshaler, out msgp.Unmarshaler) error {
 next:
 	v := c.next()
 	if v == nil {
@@ -185,7 +185,7 @@ next:
 	return err
 }
 
-func (c *clusterClient) Async(method string, in enc.MsgEncoder) (AsyncResponse, error) {
+func (c *clusterClient) Async(method string, in msgp.Marshaler) (AsyncResponse, error) {
 next:
 	v := c.next()
 	if v == nil {

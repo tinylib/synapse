@@ -1,7 +1,7 @@
 package synapse
 
 import (
-	"github.com/philhofer/msgp/enc"
+	"github.com/philhofer/msgp/msgp"
 	"net"
 )
 
@@ -19,7 +19,7 @@ type Request interface {
 
 	// Decode reads the data of the request
 	// into the argument.
-	Decode(enc.MsgDecoder) error
+	Decode(msgp.Unmarshaler) error
 }
 
 // Request implementation
@@ -32,7 +32,7 @@ type request struct {
 func (r *request) Name() string         { return r.name }
 func (r *request) RemoteAddr() net.Addr { return r.addr }
 
-func (r *request) Decode(m enc.MsgDecoder) error {
+func (r *request) Decode(m msgp.Unmarshaler) error {
 	var err error
 	if m != nil {
 		r.in, err = m.UnmarshalMsg(r.in)

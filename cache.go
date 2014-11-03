@@ -1,7 +1,6 @@
 package synapse
 
 import (
-	"github.com/philhofer/msgp/enc"
 	"io"
 	"sync"
 )
@@ -16,14 +15,11 @@ var (
 
 func init() {
 	cwPool.New = func() interface{} {
-		cw := &connWrapper{}
-		cw.en = enc.NewEncoder(&cw.out)
-		return cw
+		return &connWrapper{}
 	}
 
 	wtPool.New = func() interface{} {
 		wt := &waiter{}
-		wt.en = enc.NewEncoder(&wt.buf)
 		wt.done = make(chan struct{}, 1)
 		return wt
 	}
@@ -53,7 +49,6 @@ func pushWaiter(w *waiter) {
 	if w != nil {
 		w.parent = nil
 		w.err = nil
-		w.buf.Reset()
 		wtPool.Put(w)
 	}
 }

@@ -5,7 +5,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"github.com/philhofer/msgp/enc"
+	"github.com/philhofer/msgp/msgp"
 	"io"
 	"io/ioutil"
 	"log"
@@ -37,12 +37,12 @@ var (
 type Client interface {
 	// Call asks the server to perform 'method' on 'in' and
 	// return the response to 'out'.
-	Call(method string, in enc.MsgEncoder, out enc.MsgDecoder) error
+	Call(method string, in msgp.Marshaler, out msgp.Unmarshaler) error
 
 	// Async writes the request to the connection
 	// and returns a handler that can be used
 	// to wait for the response.
-	Async(method string, in enc.MsgEncoder) (AsyncResponse, error)
+	Async(method string, in msgp.Marshaler) (AsyncResponse, error)
 
 	// Close closes the client.
 	Close() error
@@ -52,12 +52,12 @@ type Client interface {
 // calls to client.Async
 type AsyncResponse interface {
 	// Read reads the response to the
-	// request into the decoder, returning
+	// request into the object, returning
 	// any errors encountered. Read blocks
 	// until a response is received. Calling
 	// Read more than once will cause a panic.
 	// Calling Read(nil) discards the response.
-	Read(out enc.MsgDecoder) error
+	Read(out msgp.Unmarshaler) error
 }
 
 // DialTCP creates a new client to the server
@@ -147,10 +147,8 @@ type waiter struct {
 	done   chan struct{}  // for notifying response (capacity 1)
 	err    error          // response error on wakeup, if applicable
 	etime  int64          // enqueue time, for timeout
-	buf    bytes.Buffer   // output buffer
 	lead   [leadSize]byte // lead for seq, type, sz
 	in     []byte         // response body
-	en     *enc.MsgWriter // wraps buffer
 }
 
 func (c *client) forceClose() error {
@@ -321,13 +319,13 @@ func (w *waiter) writeCommand(cmd command, msg []byte) error {
 	w.parent.mlock.Unlock()
 
 	// write buffered msg
-	w.buf.Reset()
-	w.buf.Write(w.lead[:])
-	w.buf.WriteByte(byte(cmd))
-	w.buf.Write(msg)
+	var buf bytes.Buffer
+	buf.Write(w.lead[:])
+	buf.WriteByte(byte(cmd))
+	buf.Write(msg)
 
 	// raw request body
-	bts := w.buf.Bytes()
+	bts := buf.Bytes()
 	olen := len(bts) - leadSize
 	if olen > maxMessageSize {
 		// dequeue
@@ -350,7 +348,7 @@ func (w *waiter) writeCommand(cmd command, msg []byte) error {
 	return nil
 }
 
-func (w *waiter) write(method string, in enc.MsgEncoder) error {
+func (w *waiter) write(method string, in msgp.Marshaler) error {
 
 	// don't write if we're closing
 	if atomic.LoadUint32(&w.parent.cflag) == 0 {
@@ -368,23 +366,25 @@ func (w *waiter) write(method string, in enc.MsgEncoder) error {
 	w.parent.pending[sn] = w
 	w.parent.mlock.Unlock()
 
+	var err error
+
 	// save 12 bytes up front
-	w.buf.Reset()
-	w.en.Write(w.lead[:])
+	w.in = append(w.in[0:0], w.lead[:]...)
 
 	// write body
-	w.en.WriteString(method)
-
+	w.in = msgp.AppendString(w.in, method)
 	// handle nil body
 	if in != nil {
-		in.EncodeTo(w.en)
+		w.in, err = in.AppendMsg(w.in)
+		if err != nil {
+			return err
+		}
 	} else {
-		w.en.WriteMapHeader(0)
+		w.in = msgp.AppendMapHeader(w.in, 0)
 	}
 
 	// raw request body
-	bts := w.buf.Bytes()
-	olen := len(bts) - leadSize
+	olen := len(w.in) - leadSize
 
 	if olen > maxMessageSize {
 		// dequeue
@@ -394,9 +394,9 @@ func (w *waiter) write(method string, in enc.MsgEncoder) error {
 		return errors.New("message too large")
 	}
 
-	putFrame(bts, sn, fREQ, olen)
+	putFrame(w.in, sn, fREQ, olen)
 
-	_, err := w.parent.conn.Write(bts)
+	_, err = w.parent.conn.Write(w.in)
 	if err != nil {
 		// dequeue
 		w.parent.mlock.Lock()
@@ -407,13 +407,13 @@ func (w *waiter) write(method string, in enc.MsgEncoder) error {
 	return nil
 }
 
-func (w *waiter) read(out enc.MsgDecoder) error {
+func (w *waiter) read(out msgp.Unmarshaler) error {
 	var (
 		code int
 		err  error
 		body []byte
 	)
-	code, body, err = enc.ReadIntBytes(w.in)
+	code, body, err = msgp.ReadIntBytes(w.in)
 	if err != nil {
 		return err
 	}
@@ -426,7 +426,7 @@ func (w *waiter) read(out enc.MsgDecoder) error {
 	return err
 }
 
-func (w *waiter) call(method string, in enc.MsgEncoder, out enc.MsgDecoder) error {
+func (w *waiter) call(method string, in msgp.Marshaler, out msgp.Unmarshaler) error {
 	err := w.write(method, in)
 	if err != nil {
 		return err
@@ -443,7 +443,7 @@ func (w *waiter) call(method string, in enc.MsgEncoder, out enc.MsgDecoder) erro
 	return w.read(out)
 }
 
-func (c *client) Call(method string, in enc.MsgEncoder, out enc.MsgDecoder) error {
+func (c *client) Call(method string, in msgp.Marshaler, out msgp.Unmarshaler) error {
 	// grab a waiter from the heap,
 	// make the call, put it back
 	w := popWaiter(c)
@@ -500,7 +500,7 @@ type async struct {
 	w *waiter
 }
 
-func (a async) Read(out enc.MsgDecoder) error {
+func (a async) Read(out msgp.Unmarshaler) error {
 	// wait
 	<-a.w.done
 
@@ -521,7 +521,7 @@ func (a async) Read(out enc.MsgDecoder) error {
 	return err
 }
 
-func (c *client) Async(method string, in enc.MsgEncoder) (AsyncResponse, error) {
+func (c *client) Async(method string, in msgp.Marshaler) (AsyncResponse, error) {
 	w := popWaiter(c)
 	err := w.write(method, in)
 	if err != nil {

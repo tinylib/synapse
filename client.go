@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"github.com/philhofer/msgp/enc"
 	"io"
 	"io/ioutil"
 	"log"
@@ -14,6 +13,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/philhofer/msgp/msgp"
 )
 
 var (
@@ -37,12 +38,12 @@ var (
 type Client interface {
 	// Call asks the server to perform 'method' on 'in' and
 	// return the response to 'out'.
-	Call(method string, in enc.MsgEncoder, out enc.MsgDecoder) error
+	Call(method string, in msgp.Marshaler, out msgp.Unmarshaler) error
 
 	// Async writes the request to the connection
 	// and returns a handler that can be used
 	// to wait for the response.
-	Async(method string, in enc.MsgEncoder) (AsyncResponse, error)
+	Async(method string, in msgp.Marshaler) (AsyncResponse, error)
 
 	// Close closes the client.
 	Close() error
@@ -57,7 +58,7 @@ type AsyncResponse interface {
 	// until a response is received. Calling
 	// Read more than once will cause a panic.
 	// Calling Read(nil) discards the response.
-	Read(out enc.MsgDecoder) error
+	Read(out msgp.Unmarshaler) error
 }
 
 // DialTCP creates a new client to the server
@@ -150,7 +151,7 @@ type waiter struct {
 	buf    bytes.Buffer   // output buffer
 	lead   [leadSize]byte // lead for seq, type, sz
 	in     []byte         // response body
-	en     *enc.MsgWriter // wraps buffer
+	en     *msgp.Writer   // wraps buffer
 }
 
 func (c *client) forceClose() error {
@@ -264,7 +265,6 @@ func (c *client) readLoop() {
 		if bwr.Buffered() < sz {
 			deadline = true
 			c.conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
-
 		}
 		_, err = io.ReadFull(bwr, w.in)
 		if err != nil {
@@ -350,7 +350,7 @@ func (w *waiter) writeCommand(cmd command, msg []byte) error {
 	return nil
 }
 
-func (w *waiter) write(method string, in enc.MsgEncoder) error {
+func (w *waiter) write(method string, in msgp.Marshaler) error {
 
 	// don't write if we're closing
 	if atomic.LoadUint32(&w.parent.cflag) == 0 {
@@ -377,12 +377,13 @@ func (w *waiter) write(method string, in enc.MsgEncoder) error {
 
 	// handle nil body
 	if in != nil {
-		in.EncodeTo(w.en)
+		w.en.Encode(in)
 	} else {
 		w.en.WriteMapHeader(0)
 	}
 
 	// raw request body
+	w.en.Flush()
 	bts := w.buf.Bytes()
 	olen := len(bts) - leadSize
 
@@ -407,13 +408,13 @@ func (w *waiter) write(method string, in enc.MsgEncoder) error {
 	return nil
 }
 
-func (w *waiter) read(out enc.MsgDecoder) error {
+func (w *waiter) read(out msgp.Unmarshaler) error {
 	var (
 		code int
 		err  error
 		body []byte
 	)
-	code, body, err = enc.ReadIntBytes(w.in)
+	code, body, err = msgp.ReadIntBytes(w.in)
 	if err != nil {
 		return err
 	}
@@ -426,7 +427,7 @@ func (w *waiter) read(out enc.MsgDecoder) error {
 	return err
 }
 
-func (w *waiter) call(method string, in enc.MsgEncoder, out enc.MsgDecoder) error {
+func (w *waiter) call(method string, in msgp.Marshaler, out msgp.Unmarshaler) error {
 	err := w.write(method, in)
 	if err != nil {
 		return err
@@ -443,7 +444,7 @@ func (w *waiter) call(method string, in enc.MsgEncoder, out enc.MsgDecoder) erro
 	return w.read(out)
 }
 
-func (c *client) Call(method string, in enc.MsgEncoder, out enc.MsgDecoder) error {
+func (c *client) Call(method string, in msgp.Marshaler, out msgp.Unmarshaler) error {
 	// grab a waiter from the heap,
 	// make the call, put it back
 	w := popWaiter(c)
@@ -500,7 +501,7 @@ type async struct {
 	w *waiter
 }
 
-func (a async) Read(out enc.MsgDecoder) error {
+func (a async) Read(out msgp.Unmarshaler) error {
 	// wait
 	<-a.w.done
 
@@ -521,7 +522,7 @@ func (a async) Read(out enc.MsgDecoder) error {
 	return err
 }
 
-func (c *client) Async(method string, in enc.MsgEncoder) (AsyncResponse, error) {
+func (c *client) Async(method string, in msgp.Marshaler) (AsyncResponse, error) {
 	w := popWaiter(c)
 	err := w.write(method, in)
 	if err != nil {

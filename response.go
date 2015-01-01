@@ -1,8 +1,6 @@
 package synapse
 
-import (
-	"github.com/philhofer/msgp/enc"
-)
+import "github.com/philhofer/msgp/msgp"
 
 // A ResponseWriter is the interface through
 // which Handlers write responses. Handlers can
@@ -20,12 +18,12 @@ type ResponseWriter interface {
 	// to send no-op. Send will error if the
 	// encoder errors or the message size
 	// is too large.
-	Send(enc.MsgEncoder) error
+	Send(msgp.Marshaler) error
 }
 
 // ResponseWriter implementation
 type response struct {
-	en    *enc.MsgWriter
+	en    *msgp.Writer
 	wrote bool
 }
 
@@ -37,26 +35,20 @@ func (r *response) Error(s Status) {
 	r.en.WriteInt(int(s))
 }
 
-func (r *response) Send(e enc.MsgEncoder) error {
+func (r *response) Send(e msgp.Marshaler) error {
 	if r.wrote {
 		return nil
 	}
 	r.wrote = true
 
-	var nr int
-	var nn int
 	var err error
-	nr, _ = r.en.WriteInt(int(okStatus))
+	err = r.en.WriteInt(int(okStatus))
+	if err != nil {
+		return err
+	}
 	if e != nil {
-		nn, err = e.EncodeTo(r.en)
-		if err != nil {
-			return err
-		}
-		nr += nn
-		if nr+leadSize > maxMessageSize {
-			return ErrTooLarge
-		}
-		return nil
+		err = r.en.Encode(e)
+		return err
 	}
 	r.en.WriteNil()
 	return nil

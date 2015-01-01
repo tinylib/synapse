@@ -1,9 +1,10 @@
 package synapse
 
 import (
-	"github.com/philhofer/msgp/enc"
 	"io"
 	"sync"
+
+	"github.com/philhofer/msgp/msgp"
 )
 
 var (
@@ -17,13 +18,13 @@ var (
 func init() {
 	cwPool.New = func() interface{} {
 		cw := &connWrapper{}
-		cw.en = enc.NewEncoder(&cw.out)
+		cw.en = msgp.NewWriter(&cw.out)
 		return cw
 	}
 
 	wtPool.New = func() interface{} {
 		wt := &waiter{}
-		wt.en = enc.NewEncoder(&wt.buf)
+		wt.en = msgp.NewWriter(&wt.buf)
 		wt.done = make(chan struct{}, 1)
 		return wt
 	}

@@ -1,8 +1,9 @@
 package synapse
 
 import (
-	"github.com/philhofer/msgp/enc"
 	"io"
+
+	"github.com/philhofer/msgp/msgp"
 )
 
 // JSPipe is a decoder that can be used
@@ -18,7 +19,7 @@ import (
 //	res, _ := client.Async("thing", in)
 //	res.Read(synapse.JSPipe(os.Stdout))
 //
-func JSPipe(w io.Writer) enc.MsgDecoder {
+func JSPipe(w io.Writer) msgp.Decodable {
 	return jsp{Writer: w}
 }
 
@@ -28,16 +29,16 @@ type jsp struct {
 	io.Writer
 }
 
-func (j jsp) DecodeMsg(r io.Reader) (int, error) {
-	n, err := enc.CopyToJSON(j, r)
-	return int(n), err
+func (j jsp) DecodeMsg(r *msgp.Reader) error {
+	_, err := msgp.CopyToJSON(j, r)
+	return err
 }
 
-func (j jsp) DecodeFrom(dc *enc.MsgReader) (int, error) {
-	n, err := enc.DecodeToJSON(j, dc)
+func (j jsp) DecodeFrom(dc *msgp.Reader) (int, error) {
+	n, err := dc.WriteToJSON(j)
 	return int(n), err
 }
 
 func (j jsp) UnmarshalMsg(b []byte) ([]byte, error) {
-	return enc.UnmarshalAsJSON(j, b)
+	return msgp.UnmarshalAsJSON(j, b)
 }

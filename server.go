@@ -3,7 +3,6 @@ package synapse
 import (
 	"bufio"
 	"bytes"
-	"github.com/philhofer/msgp/enc"
 	"io"
 	"io/ioutil"
 	"log"
@@ -11,6 +10,8 @@ import (
 	"net"
 	"strings"
 	"time"
+
+	"github.com/philhofer/msgp/msgp"
 )
 
 const (
@@ -201,7 +202,7 @@ type connWrapper struct {
 	out  bytes.Buffer // we need to write to parent.conn atomically, so buffer the whole message
 	req  request
 	res  response
-	en   *enc.MsgWriter // wraps bytes.Buffer
+	en   *msgp.Writer // wraps bytes.Buffer
 	conn io.Writer
 }
 
@@ -219,7 +220,7 @@ func handleReq(cw *connWrapper, remote net.Addr, h Handler) {
 	cw.out.Write(cw.lead[:])
 
 	var err error
-	cw.req.name, cw.req.in, err = enc.ReadStringBytes(cw.in)
+	cw.req.name, cw.req.in, err = msgp.ReadStringBytes(cw.in)
 	if err != nil {
 		cw.res.Error(BadRequest)
 	} else {
@@ -230,6 +231,7 @@ func handleReq(cw *connWrapper, remote net.Addr, h Handler) {
 		}
 	}
 
+	cw.res.en.Flush() // TODO(ttacon): put inside Error/Send or add to interface?
 	bts := cw.out.Bytes()
 	blen := len(bts) - leadSize // length minus frame length
 

@@ -6,16 +6,7 @@ import (
 
 type testString string
 
-func (s *testString) size() int {
-	return msgp.StringPrefixSize + len(*s)
-}
-
-func (s *testString) MarshalMsg() ([]byte, error) {
-	out := make([]byte, 0, s.size())
-	return s.AppendMsg(out)
-}
-
-func (s *testString) AppendMsg(b []byte) ([]byte, error) {
+func (s *testString) MarshalMsg(b []byte) ([]byte, error) {
 	return msgp.AppendString(b, string(*s)), nil
 }
 

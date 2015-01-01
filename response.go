@@ -57,7 +57,7 @@ func (r *response) Send(msg msgp.Marshaler) error {
 	r.resetLead()
 	r.out = msgp.AppendInt(r.out, int(okStatus))
 	if msg != nil {
-		r.out, err = msg.AppendMsg(r.out)
+		r.out, err = msg.MarshalMsg(r.out)
 		if err != nil {
 			return err
 		}

@@ -375,7 +375,7 @@ func (w *waiter) write(method string, in msgp.Marshaler) error {
 	w.in = msgp.AppendString(w.in, method)
 	// handle nil body
 	if in != nil {
-		w.in, err = in.AppendMsg(w.in)
+		w.in, err = in.MarshalMsg(w.in)
 		if err != nil {
 			return err
 		}

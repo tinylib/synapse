@@ -106,11 +106,11 @@ func (c *clusterClient) dialAll() error {
 			// if we don't do this, then Stats() will break,
 			// b/c we compare RemoteAddr(), which is not
 			// necessarily the input address
-			c.remotes[i] = conn.RemoteAddr().String()
+			c.remotes[idx] = conn.RemoteAddr().String()
 
 			cl, err := newClient(conn, 1000)
 			if err != nil {
-				log.Printf("synapse cluster: error establishing sync with %s %s: %s", c.nwk, c.remotes[i], err)
+				log.Printf("synapse cluster: error establishing sync with %s %s: %s", c.nwk, c.remotes[idx], err)
 				errs[idx] = err
 				return
 			}

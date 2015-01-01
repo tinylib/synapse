@@ -262,7 +262,6 @@ func (c *client) readLoop() {
 		if bwr.Buffered() < sz {
 			deadline = true
 			c.conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
-
 		}
 		_, err = io.ReadFull(bwr, w.in)
 		if err != nil {

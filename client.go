@@ -335,7 +335,7 @@ func (w *waiter) writeCommand(cmd command, msg []byte) error {
 	}
 
 	putFrame(bts, seqn, fCMD, olen)
-
+	w.etime = time.Now().Unix()
 	_, err := w.parent.conn.Write(bts)
 	if err != nil {
 		// dequeue

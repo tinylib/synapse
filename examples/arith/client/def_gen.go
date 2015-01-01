@@ -5,17 +5,79 @@ package main
 // DO NOT EDIT
 
 import (
-	"github.com/philhofer/msgp/enc"
-	"io"
-	"bytes"
+	"github.com/philhofer/msgp/msgp"
 )
 
 
-// MarshalMsg marshals a Num into MessagePack
-func (z *Num) MarshalMsg() ([]byte, error) {
-	var buf bytes.Buffer
-	_, err := z.EncodeMsg(&buf)
-	return buf.Bytes(), err
+// DecodeMsg implements the msgp.Decodable interface
+func (z *Num) DecodeMsg(dc *msgp.Reader) (err error) {
+	var field []byte
+	_ = field
+
+	var isz uint32
+	isz, err = dc.ReadMapHeader()
+	if err != nil {
+		return
+	}
+	for xplz := uint32(0); xplz < isz; xplz++ {
+		field, err = dc.ReadMapKey(field)
+		if err != nil {
+			return
+		}
+		switch msgp.UnsafeString(field) {
+
+		case "val":
+
+			z.Value, err = dc.ReadFloat64()
+
+			if err != nil {
+				return
+			}
+
+		default:
+			err = dc.Skip()
+			if err != nil {
+				return
+			}
+		}
+	}
+
+	return
+}
+
+// EncodeMsg implements the msgp.Encodable interface
+func (z *Num) EncodeMsg(en *msgp.Writer) (err error) {
+
+	err = en.WriteMapHeader(1)
+	if err != nil {
+		return
+	}
+
+	err = en.WriteString("val")
+	if err != nil {
+		return
+	}
+
+	err = en.WriteFloat64(z.Value)
+
+	if err != nil {
+		return
+	}
+
+	return
+}
+
+// MarshalMsg implements the msgp.Marshaler interface
+func (z *Num) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+
+	o = msgp.AppendMapHeader(o, 1)
+
+	o = msgp.AppendString(o, "val")
+
+	o = msgp.AppendFloat64(o, z.Value)
+
+	return
 }
 
 // UnmarshalMsg unmarshals a Num from MessagePack, returning any extra bytes
@@ -25,27 +87,27 @@ func (z *Num) UnmarshalMsg(bts []byte) (o []byte, err error) {
 	_ = field
 
 	var isz uint32
-	isz, bts, err = enc.ReadMapHeaderBytes(bts)
+	isz, bts, err = msgp.ReadMapHeaderBytes(bts)
 	if err != nil {
 		return
 	}
 	for xplz := uint32(0); xplz < isz; xplz++ {
-		field, bts, err = enc.ReadStringZC(bts)
+		field, bts, err = msgp.ReadMapKeyZC(bts)
 		if err != nil {
 			return
 		}
-		switch enc.UnsafeString(field) {
+		switch msgp.UnsafeString(field) {
 
 		case "val":
 
-			z.Value, bts, err = enc.ReadFloat64Bytes(bts)
+			z.Value, bts, err = msgp.ReadFloat64Bytes(bts)
 
 			if err != nil {
 				return
 			}
 
 		default:
-			bts, err = enc.Skip(bts)
+			bts, err = msgp.Skip(bts)
 			if err != nil {
 				return
 			}
@@ -56,89 +118,13 @@ func (z *Num) UnmarshalMsg(bts []byte) (o []byte, err error) {
 	return
 }
 
-// EncodeMsg encodes a Num as MessagePack to the supplied io.Writer,
-// returning the number of bytes written and any errors encountered
-func (z *Num) EncodeMsg(w io.Writer) (n int, err error) {
-	en := enc.NewEncoder(w)
-	return z.EncodeTo(en)
-}
+// Msgsize implements the msgp.Sizer interface
+func (z *Num) Msgsize() (s int) {
 
-// EncodeTo encodes a Num as MessagePack using the provided encoder,
-// returning the number of bytes written and any errors encountered
-func (z *Num) EncodeTo(en *enc.MsgWriter) (n int, err error) {
-	var nn int
-	_ = nn
+	s += msgp.MapHeaderSize
+	s += msgp.StringPrefixSize + 3
 
-	nn, err = en.WriteMapHeader(1)
-	n += nn
-	if err != nil {
-		return
-	}
-
-	nn, err = en.WriteString("val")
-	n += nn
-	if err != nil {
-		return
-	}
-
-	nn, err = en.WriteFloat64(z.Value)
-
-	n += nn
-	if err != nil {
-		return
-	}
-
-	return
-}
-
-// DecodeMsg decodes MessagePack from the provided io.Reader into the Num,
-// returning the number of bytes read and any errors encountered
-func (z *Num) DecodeMsg(r io.Reader) (n int, err error) {
-	dc := enc.NewDecoder(r)
-	n, err = z.DecodeFrom(dc)
-	enc.Done(dc)
-	return
-}
-
-// DecodeFrom deocdes MessagePack from the provided decoder into the Num,
-// returning the number of bytes read and any errors encountered.
-func (z *Num) DecodeFrom(dc *enc.MsgReader) (n int, err error) {
-	var nn int
-	var field []byte
-	_ = nn
-	_ = field
-
-	var isz uint32
-	isz, nn, err = dc.ReadMapHeader()
-	n += nn
-	if err != nil {
-		return
-	}
-	for xplz := uint32(0); xplz < isz; xplz++ {
-		field, nn, err = dc.ReadStringAsBytes(field)
-		n += nn
-		if err != nil {
-			return
-		}
-		switch enc.UnsafeString(field) {
-
-		case "val":
-
-			z.Value, nn, err = dc.ReadFloat64()
-
-			n += nn
-			if err != nil {
-				return
-			}
-
-		default:
-			nn, err = dc.Skip()
-			n += nn
-			if err != nil {
-				return
-			}
-		}
-	}
+	s += msgp.Float64Size
 
 	return
 }

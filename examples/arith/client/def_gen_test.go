@@ -7,96 +7,116 @@ package main
 import (
 	"testing"
 	"bytes"
-	"github.com/philhofer/msgp/enc"
+	"github.com/philhofer/msgp/msgp"
 )
 
-func TestEncodeDecodeNum(t *testing.T) {
-	t.Parallel()
+
+func TestNumEncodeDecode(t *testing.T) {
 	v := new(Num)
 	var buf bytes.Buffer
-	n, _ := v.EncodeMsg(&buf)
+	msgp.Encode(&buf, v)
+
+	m := v.Msgsize()
+	if buf.Len() > m {
+		t.Logf("WARNING: Maxsize() for %v is inaccurate", v)
+	}
 
 	vn := new(Num)
-	nr, err := vn.DecodeMsg(&buf)
-	if err != nil {
-		t.Error(err)
-	}
-
-	if nr != n {
-		t.Errorf("Wrote %d bytes; read %d bytes", n, nr)
-	}
-
-	buf.Reset()
-	v.EncodeMsg(&buf)
-
-	_, err = enc.NewDecoder(&buf).Skip()
+	err := msgp.Decode(&buf, vn)
 	if err != nil {
 		t.Error(err)
 	}
 
 	buf.Reset()
-	v.EncodeMsg(&buf)
-
-	ls := new(Num)
-	var left []byte
-	left, err = ls.UnmarshalMsg(buf.Bytes())
+	msgp.Encode(&buf, v)
+	err = msgp.NewReader(&buf).Skip()
 	if err != nil {
 		t.Error(err)
 	}
-	if len(left) > 0 {
-		t.Error("bytes left over...")
-	}
-
-	left, err = enc.Skip(buf.Bytes())
-	if err != nil {
-		t.Error(err)
-	}
-	if len(left) > 0 {
-		t.Errorf("bytes left over after skip: %q", left)
-	}
 }
 
-func BenchmarkWriteNum(b *testing.B) {
+func BenchmarkNumEncode(b *testing.B) {
 	v := new(Num)
 	var buf bytes.Buffer
-	en := enc.NewEncoder(&buf)
-	v.EncodeTo(en)
-	b.ReportAllocs()
+	msgp.Encode(&buf, v)
 	b.SetBytes(int64(buf.Len()))
+	en := msgp.NewWriter(msgp.Nowhere)
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		buf.Reset()
-		v.EncodeTo(en)
+		v.EncodeMsg(en)
 	}
+	en.Flush()
 }
 
-func BenchmarkReadNum(b *testing.B) {
+func BenchmarkNumDecode(b *testing.B) {
 	v := new(Num)
 	var buf bytes.Buffer
-	v.EncodeMsg(&buf)
-	rd := bytes.NewReader(buf.Bytes())
-	dc := enc.NewDecoder(rd)
-	b.ReportAllocs()
+	msgp.Encode(&buf, v)
 	b.SetBytes(int64(buf.Len()))
+	rd := msgp.NewEndlessReader(buf.Bytes())
+	dc := msgp.NewReader(rd)
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		rd.Seek(0, 0)
-		_, err := v.DecodeFrom(dc)
+		err := v.DecodeMsg(dc)
 		if err != nil {
 			b.Fatal(err)
 		}
 	}
 }
-
-func BenchmarkUnmarshalNum(b *testing.B) {
+func TestNumMarshalUnmarshal(t *testing.T) {
 	v := new(Num)
-	var buf bytes.Buffer
-	v.EncodeMsg(&buf)
+	bts, err := v.MarshalMsg(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	left, err := v.UnmarshalMsg(bts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(left) > 0 {
+		t.Errorf("%d bytes left over after UnmarshalMsg(): %q", len(left), left)
+	}
+
+	left, err = msgp.Skip(bts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(left) > 0 {
+		t.Errorf("%d bytes left over after Skip(): %q", len(left), left)
+	}
+}
+
+func BenchmarkNumMarshalMsg(b *testing.B) {
+	v := new(Num)
 	b.ReportAllocs()
-	b.SetBytes(int64(buf.Len()))
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err := v.UnmarshalMsg(buf.Bytes())
+		v.MarshalMsg(nil)
+	}
+}
+
+func BenchmarkNumAppendMsg(b *testing.B) {
+	v := new(Num)
+	bts := make([]byte, 0, v.Msgsize())
+	bts, _ = v.MarshalMsg(bts[0:0])
+	b.SetBytes(int64(len(bts)))
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		bts, _ = v.MarshalMsg(bts[0:0])
+	}
+}
+
+func BenchmarkNumUnmarshal(b *testing.B) {
+	v := new(Num)
+	bts, _ := v.MarshalMsg(nil)
+	b.ReportAllocs()
+	b.SetBytes(int64(len(bts)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := v.UnmarshalMsg(bts)
 		if err != nil {
 			b.Fatal(err)
 		}

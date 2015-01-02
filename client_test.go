@@ -1,6 +1,7 @@
 package synapse
 
 import (
+	"bytes"
 	"net"
 	"sync"
 	"testing"
@@ -37,13 +38,13 @@ func TestClient(t *testing.T) {
 
 	for i := 0; i < concurrent; i++ {
 		go func() {
-			instr := testString("hello, world!")
-			var outstr testString
+			instr := testData("hello, world!")
+			var outstr testData
 			err := cl.Call("echo", &instr, &outstr)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if instr != outstr {
+			if !bytes.Equal([]byte(instr), []byte(outstr)) {
 				t.Fatalf("%q in; %q out", instr, outstr)
 			}
 			wg.Done()
@@ -88,7 +89,7 @@ func TestAsyncClient(t *testing.T) {
 	// read 5 responses
 	const concurrent = 5
 	hlrs := make([]AsyncResponse, concurrent)
-	instr := testString("hello, world!")
+	instr := testData("hello, world!")
 	for i := 0; i < concurrent; i++ {
 		hlrs[i], err = cl.Async("any", &instr)
 		if err != nil {
@@ -97,13 +98,13 @@ func TestAsyncClient(t *testing.T) {
 	}
 
 	for i := range hlrs {
-		var outstr testString
+		var outstr testData
 		err = hlrs[i].Read(&outstr)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		if outstr != instr {
+		if !bytes.Equal([]byte(instr), []byte(outstr)) {
 			t.Errorf("%q in; %q out", instr, outstr)
 		}
 	}
@@ -145,7 +146,7 @@ func TestUDP(t *testing.T) {
 	// read 5 responses
 	const concurrent = 5
 	hlrs := make([]AsyncResponse, concurrent)
-	instr := testString("hello, world!")
+	instr := testData("hello, world!")
 	for i := 0; i < concurrent; i++ {
 		hlrs[i], err = cl.Async("any", &instr)
 		if err != nil {
@@ -154,13 +155,13 @@ func TestUDP(t *testing.T) {
 	}
 
 	for i := range hlrs {
-		var outstr testString
+		var outstr testData
 		err = hlrs[i].Read(&outstr)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		if outstr != instr {
+		if !bytes.Equal([]byte(instr), []byte(outstr)) {
 			t.Errorf("%q in; %q out", instr, outstr)
 		}
 	}
@@ -246,14 +247,14 @@ func BenchmarkTCPEcho(b *testing.B) {
 	b.ReportAllocs()
 	b.SetParallelism(20)
 	b.RunParallel(func(pb *testing.PB) {
-		instr := testString("hello, world!")
-		var outstr testString
+		instr := testData("hello, world!")
+		var outstr testData
 		for pb.Next() {
 			err = cl.Call("echo", &instr, &outstr)
 			if err != nil {
 				b.Fatal(err)
 			}
-			if instr != outstr {
+			if !bytes.Equal([]byte(instr), []byte(outstr)) {
 				b.Fatalf("%q in; %q out", instr, outstr)
 			}
 		}
@@ -321,14 +322,14 @@ func BenchmarkUDPEcho(b *testing.B) {
 	b.ReportAllocs()
 	b.SetParallelism(20)
 	b.RunParallel(func(pb *testing.PB) {
-		instr := testString("hello, world!")
-		var outstr testString
+		instr := testData("hello, world!")
+		var outstr testData
 		for pb.Next() {
 			err = cl.Call("any", &instr, &outstr)
 			if err != nil {
 				b.Fatal(err)
 			}
-			if instr != outstr {
+			if !bytes.Equal([]byte(instr), []byte(outstr)) {
 				b.Fatalf("%q in; %q out", instr, outstr)
 			}
 		}

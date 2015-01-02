@@ -4,26 +4,23 @@ import (
 	"github.com/philhofer/msgp/msgp"
 )
 
-type testString string
+type testData []byte
 
-func (s *testString) MarshalMsg(b []byte) ([]byte, error) {
-	return msgp.AppendString(b, string(*s)), nil
+func (s *testData) MarshalMsg(b []byte) ([]byte, error) {
+	return msgp.AppendBytes(b, []byte(*s)), nil
 }
 
-func (s *testString) UnmarshalMsg(b []byte) (o []byte, err error) {
-	var t string
-	t, o, err = msgp.ReadStringBytes(b)
-	if err != nil {
-		return o, err
-	}
-	*s = testString(t)
-	return o, nil
+func (s *testData) UnmarshalMsg(b []byte) (o []byte, err error) {
+	var t []byte
+	t, o, err = msgp.ReadBytesBytes(b, []byte(*s))
+	*s = testData(t)
+	return
 }
 
 type EchoHandler struct{}
 
 func (e EchoHandler) ServeCall(req Request, res ResponseWriter) {
-	var s testString
+	var s testData
 	err := req.Decode(&s)
 	if err != nil {
 		panic(err)

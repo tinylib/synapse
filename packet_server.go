@@ -86,7 +86,7 @@ func (c pconnHandler) pconnLoop() error {
 		// that ensures the response
 		// is written to the
 		// correct address
-		w := popWrapper(pconn{c.conn, remote})
+		w := wrappers.pop(pconn{c.conn, remote})
 
 		if cap(w.in) >= isz {
 			w.in = w.in[0:isz]

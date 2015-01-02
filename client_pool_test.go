@@ -1,6 +1,7 @@
 package synapse
 
 import (
+	"bytes"
 	"net"
 	"sync"
 	"testing"
@@ -39,13 +40,13 @@ func TestClientPool(t *testing.T) {
 
 	for i := 0; i < concurrent; i++ {
 		go func() {
-			instr := testString("hello, world!")
-			var outstr testString
+			instr := testData("hello, world!")
+			var outstr testData
 			err := cl.Call("echo", &instr, &outstr)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if instr != outstr {
+			if !bytes.Equal([]byte(instr), []byte(outstr)) {
 				t.Fatalf("%q in; %q out", instr, outstr)
 			}
 			wg.Done()
@@ -89,14 +90,14 @@ func BenchmarkClientPool(b *testing.B) {
 	b.ReportAllocs()
 	b.SetParallelism(10)
 	b.RunParallel(func(pb *testing.PB) {
-		instr := testString("hello, world!")
-		var outstr testString
+		instr := testData("hello, world!")
+		var outstr testData
 		for pb.Next() {
 			err = cl.Call("echo", &instr, &outstr)
 			if err != nil {
 				b.Fatal(err)
 			}
-			if instr != outstr {
+			if !bytes.Equal([]byte(instr), []byte(outstr)) {
 				b.Fatalf("%q in; %q out", instr, outstr)
 			}
 		}
@@ -147,13 +148,13 @@ func TestClientPoolStats(t *testing.T) {
 
 	for i := 0; i < concurrent; i++ {
 		go func() {
-			instr := testString("hello, world!")
-			var outstr testString
+			instr := testData("hello, world!")
+			var outstr testData
 			err := cl.Call("echo", &instr, &outstr)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if instr != outstr {
+			if !bytes.Equal([]byte(instr), []byte(outstr)) {
 				t.Fatalf("%q in; %q out", instr, outstr)
 			}
 			wg.Done()

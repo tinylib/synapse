@@ -103,6 +103,7 @@ type connHandler struct {
 // are written in a spawned goroutine
 func (c *connHandler) connLoop() {
 	brd := bufio.NewReader(c.conn)
+	remote := c.conn.RemoteAddr()
 
 	var lead [leadSize]byte
 	var seq uint64
@@ -157,7 +158,7 @@ func (c *connHandler) connLoop() {
 			continue
 		}
 
-		w := popWrapper(c.conn)
+		w := wrappers.pop(c.conn)
 
 		if cap(w.in) >= sz {
 			w.in = w.in[0:sz]
@@ -188,15 +189,16 @@ func (c *connHandler) connLoop() {
 
 		// trigger handler
 		w.seq = seq
-		go handleReq(w, c.conn.RemoteAddr(), c.h)
+		go handleReq(w, remote, c.h)
 	}
 }
 
 // connWrapper contains all the resources
 // necessary to execute a Handler on a request
 type connWrapper struct {
-	seq  uint64
-	in   []byte // incoming message
+	next *connWrapper // only used by slab
+	seq  uint64       // sequence number
+	in   []byte       // incoming message
 	req  request
 	res  response
 	conn io.Writer
@@ -230,7 +232,7 @@ func handleReq(cw *connWrapper, remote net.Addr, h Handler) {
 		// TODO: print something more usefull...?
 		log.Printf("synapse server: error writing response: %s", err)
 	}
-	pushWrapper(cw)
+	wrappers.push(cw)
 }
 
 func handleCmd(w io.WriteCloser, seq uint64, cmd command, body []byte) {

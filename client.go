@@ -1,13 +1,12 @@
 package synapse
 
 import (
-	"bufio"
 	"bytes"
 	"errors"
 	"fmt"
+	"github.com/philhofer/fwd"
 	"github.com/philhofer/msgp/msgp"
 	"io"
-	"io/ioutil"
 	"log"
 	"net"
 	"strings"
@@ -19,17 +18,17 @@ import (
 var (
 	// ErrClosed is returns when a call is attempted
 	// on a closed client
-	ErrClosed = errors.New("client is closed")
+	ErrClosed = errors.New("synapse: client is closed")
 
 	// ErrTimeout is returned when a server
 	// doesn't respond to a request before
 	// the client's timeout scavenger can
 	// free the waiting goroutine
-	ErrTimeout = errors.New("the server didn't respond in time")
+	ErrTimeout = errors.New("synapse: the server didn't respond in time")
 
 	// ErrTooLarge is returned when the message
 	// size is larger than 65,535 bytes.
-	ErrTooLarge = errors.New("message body too large")
+	ErrTooLarge = errors.New("synapse: message body too large")
 )
 
 // Client is the interface fulfilled
@@ -134,12 +133,12 @@ func newClient(c net.Conn, timeout int64) (*client, error) {
 }
 
 type client struct {
+	conn    net.Conn           // TODO(maybe): make this multiple conns
 	csn     uint64             // sequence number; atomic
-	cflag   uint32             // client state; 1 is open; 0 is closed
-	conn    net.Conn           // TODO: make this multiple conns
 	rtt     int64              // round-trip calculation; nsec; atomic
 	mlock   sync.Mutex         // to protect map access
 	pending map[uint64]*waiter // map seq number to waiting handler
+	cflag   uint32             // client state; 1 is open; 0 is closed
 }
 
 type waiter struct {
@@ -201,10 +200,10 @@ func (c *client) readLoop() {
 	var sz int
 	var frame fType
 	var lead [leadSize]byte
-	bwr := bufio.NewReader(c.conn)
+	bwr := fwd.NewReaderSize(c.conn, 4096)
 
 	for {
-		_, err := io.ReadFull(bwr, lead[:])
+		_, err := bwr.ReadFull(lead[:])
 		if err != nil {
 			if atomic.LoadUint32(&c.cflag) == 0 {
 				// we received a FIN flag or
@@ -214,7 +213,7 @@ func (c *client) readLoop() {
 
 			// log an error if the connection
 			// wasn't simply closed
-			if err != io.EOF && !strings.Contains(err.Error(), "closed") {
+			if err != io.EOF && err != io.ErrUnexpectedEOF && !strings.Contains(err.Error(), "closed") {
 				log.Printf("synapse client: fatal: %s", err)
 			}
 			break
@@ -227,7 +226,11 @@ func (c *client) readLoop() {
 		// precisely the same way
 		if frame != fCMD && frame != fRES {
 			// ignore
-			_, _ = io.CopyN(ioutil.Discard, bwr, int64(sz))
+			_, err := bwr.Skip(sz)
+			if err != nil {
+				log.Printf("synapse client: fatal: %s", err)
+				return
+			}
 			continue
 		}
 
@@ -241,7 +244,7 @@ func (c *client) readLoop() {
 			// discard response...
 			log.Printf("synapse client: discarding response #%d; no pending waiter", seq)
 			c.conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
-			_, _ = io.CopyN(ioutil.Discard, bwr, int64(sz))
+			bwr.Skip(sz)
 			c.conn.SetReadDeadline(time.Time{})
 			continue
 		}
@@ -262,7 +265,7 @@ func (c *client) readLoop() {
 			deadline = true
 			c.conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
 		}
-		_, err = io.ReadFull(bwr, w.in)
+		_, err = bwr.ReadFull(w.in)
 		if err != nil {
 			// TODO: better info here
 			// we still need to send on w.done
@@ -318,7 +321,8 @@ func (w *waiter) writeCommand(cmd command, msg []byte) error {
 
 	// write buffered msg
 	var buf bytes.Buffer
-	buf.Write(w.lead[:])
+	var empty [leadSize]byte
+	buf.Write(empty[:])
 	buf.WriteByte(byte(cmd))
 	buf.Write(msg)
 
@@ -367,7 +371,11 @@ func (w *waiter) write(method string, in msgp.Marshaler) error {
 	var err error
 
 	// save 12 bytes up front
-	w.in = append(w.in[0:0], w.lead[:]...)
+	if cap(w.in) < leadSize {
+		w.in = make([]byte, leadSize, 256)
+	} else {
+		w.in = w.in[:leadSize]
+	}
 
 	// write body
 	w.in = msgp.AppendString(w.in, method)
@@ -389,7 +397,7 @@ func (w *waiter) write(method string, in msgp.Marshaler) error {
 		w.parent.mlock.Lock()
 		delete(w.parent.pending, sn)
 		w.parent.mlock.Unlock()
-		return errors.New("message too large")
+		return ErrTooLarge
 	}
 
 	putFrame(w.in, sn, fREQ, olen)
@@ -406,12 +414,7 @@ func (w *waiter) write(method string, in msgp.Marshaler) error {
 }
 
 func (w *waiter) read(out msgp.Unmarshaler) error {
-	var (
-		code int
-		err  error
-		body []byte
-	)
-	code, body, err = msgp.ReadIntBytes(w.in)
+	code, body, err := msgp.ReadIntBytes(w.in)
 	if err != nil {
 		return err
 	}

@@ -55,7 +55,7 @@ type AsyncResponse interface {
 	// request into the object, returning
 	// any errors encountered. Read blocks
 	// until a response is received. Calling
-	// Read more than once will cause a panic.
+	// Read more than once will cause undefined behavior.
 	// Calling Read(nil) discards the response.
 	Read(out msgp.Unmarshaler) error
 }
@@ -143,12 +143,13 @@ type client struct {
 }
 
 type waiter struct {
+	next   *waiter        // next in linked list, or self
 	parent *client        // parent *client
-	done   chan struct{}  // for notifying response (capacity 1)
+	done   sync.Mutex     // for notifying response; locked is default
 	err    error          // response error on wakeup, if applicable
 	etime  int64          // enqueue time, for timeout
-	lead   [leadSize]byte // lead for seq, type, sz
 	in     []byte         // response body
+	lead   [leadSize]byte // lead for seq, type, sz
 }
 
 func (c *client) forceClose() error {
@@ -161,7 +162,7 @@ func (c *client) forceClose() error {
 	c.mlock.Lock()
 	for _, val := range c.pending {
 		val.err = ErrClosed
-		val.done <- struct{}{}
+		val.done.Unlock()
 	}
 	c.mlock.Unlock()
 	return nil
@@ -226,9 +227,7 @@ func (c *client) readLoop() {
 		// precisely the same way
 		if frame != fCMD && frame != fRES {
 			// ignore
-			c.conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
 			_, _ = io.CopyN(ioutil.Discard, bwr, int64(sz))
-			c.conn.SetReadDeadline(time.Time{})
 			continue
 		}
 
@@ -278,7 +277,7 @@ func (c *client) readLoop() {
 		// error from last
 		// read call (usually nil)
 		w.err = err
-		w.done <- struct{}{}
+		w.done.Unlock()
 	}
 }
 
@@ -297,7 +296,7 @@ func (c *client) timeoutLoop(msec int64) {
 			if now-w.etime > msec {
 				delete(c.pending, seq)
 				w.err = ErrTimeout
-				w.done <- struct{}{}
+				w.done.Unlock()
 			}
 		}
 		c.mlock.Unlock()
@@ -430,30 +429,26 @@ func (w *waiter) call(method string, in msgp.Marshaler, out msgp.Unmarshaler) er
 	if err != nil {
 		return err
 	}
-
 	// wait for response
-	<-w.done
-
+	w.done.Lock()
 	if w.err != nil {
 		return w.err
 	}
-
-	// now we can read
 	return w.read(out)
 }
 
 func (c *client) Call(method string, in msgp.Marshaler, out msgp.Unmarshaler) error {
 	// grab a waiter from the heap,
 	// make the call, put it back
-	w := popWaiter(c)
+	w := waiters.pop(c)
 	err := w.call(method, in, out)
-	pushWaiter(w)
+	waiters.push(w)
 	return err
 }
 
 // doCommand executes a command from the client
 func (c *client) sendCommand(cmd command, msg []byte) error {
-	w := popWaiter(c)
+	w := waiters.pop(c)
 
 	err := w.writeCommand(cmd, msg)
 	if err != nil {
@@ -461,7 +456,7 @@ func (c *client) sendCommand(cmd command, msg []byte) error {
 	}
 
 	// wait
-	<-w.done
+	w.done.Lock()
 
 	if w.err != nil {
 		return w.err
@@ -469,23 +464,23 @@ func (c *client) sendCommand(cmd command, msg []byte) error {
 
 	// bad response
 	if len(w.in) == 0 {
-		pushWaiter(w)
+		waiters.push(w)
 		return errors.New("no response CMD code")
 	}
 
 	if command(w.in[0]) == cmdInvalid {
-		pushWaiter(w)
+		waiters.push(w)
 		return errors.New("command invalid")
 	}
 
 	act := cmdDirectory[command(w.in[0])]
 	if act == nil {
-		pushWaiter(w)
+		waiters.push(w)
 		return errors.New("unknown CMD code returned")
 	}
 
 	act.Client(c, c.conn, w.in[1:])
-	pushWaiter(w)
+	waiters.push(w)
 	return nil
 }
 
@@ -494,38 +489,23 @@ func (c *client) ping() error {
 	return c.sendCommand(cmdPing, nil)
 }
 
-// just wrap the waitier pointer
-type async struct {
-	w *waiter
-}
-
-func (a async) Read(out msgp.Unmarshaler) error {
-	// wait
-	<-a.w.done
-
-	if a.w.err != nil {
-		return a.w.err
+// AsyncResponse.Read
+func (w *waiter) Read(out msgp.Unmarshaler) error {
+	w.done.Lock()
+	if w.err != nil {
+		return w.err
 	}
-
-	err := a.w.read(out)
-	pushWaiter(a.w)
-
-	// panic on a second
-	// call to Read; we shouldn't
-	// maintain a reference
-	// to a waiter after pushWaiter()
-	// under any circumstances
-	a.w = nil
-
+	err := w.read(out)
+	waiters.push(w)
 	return err
 }
 
 func (c *client) Async(method string, in msgp.Marshaler) (AsyncResponse, error) {
-	w := popWaiter(c)
+	w := waiters.pop(c)
 	err := w.write(method, in)
 	if err != nil {
-		pushWaiter(w)
+		waiters.push(w)
 		return nil, err
 	}
-	return async{w}, nil
+	return w, nil
 }

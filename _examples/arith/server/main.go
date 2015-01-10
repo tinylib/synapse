@@ -6,6 +6,12 @@ import (
 	"net"
 )
 
+//go:generate msgp -io=false
+
+type Num struct {
+	Value float64 `msg:"val"`
+}
+
 func main() {
 	mux := synapse.NewRouter()
 	mux.HandleFunc("double", func(req synapse.Request, res synapse.ResponseWriter) {

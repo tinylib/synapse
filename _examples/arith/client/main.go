@@ -6,6 +6,12 @@ import (
 	"os"
 )
 
+//go:generate msgp -io=false
+
+type Num struct {
+	Value float64 `msg:"val"`
+}
+
 func main() {
 	cl, err := synapse.DialTCP("localhost:7000")
 	if err != nil {

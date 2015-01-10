@@ -34,7 +34,5 @@ func main() {
 	err = res.Read(synapse.JSPipe(os.Stdout))
 	if err != nil {
 		fmt.Println(err)
-		return
 	}
-
 }

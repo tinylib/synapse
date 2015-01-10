@@ -20,13 +20,17 @@ type Request interface {
 	// Decode reads the data of the request
 	// into the argument.
 	Decode(msgp.Unmarshaler) error
+
+	// IsNil returns whether or not
+	// the body of the request is 'nil'
+	IsNil() bool
 }
 
 // Request implementation
 type request struct {
 	name string
-	addr net.Addr
 	in   []byte
+	addr net.Addr
 }
 
 func (r *request) Name() string         { return r.name }
@@ -39,4 +43,8 @@ func (r *request) Decode(m msgp.Unmarshaler) error {
 		return err
 	}
 	return nil
+}
+
+func (r *request) IsNil() bool {
+	return msgp.IsNil(r.in)
 }

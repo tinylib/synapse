@@ -60,7 +60,8 @@ type AsyncResponse interface {
 }
 
 // DialTCP creates a new client to the server
-// located at the provided address.
+// located at the provided address. Request timeout
+// is set to one second.
 func DialTCP(address string) (Client, error) {
 	addr, err := net.ResolveTCPAddr("tcp", address)
 	if err != nil {
@@ -76,7 +77,7 @@ func DialTCP(address string) (Client, error) {
 
 // DialUnix creates a new client to the
 // server listening on the provided
-// unix socket address
+// unix socket address. Timeout is set to 200ms.
 func DialUnix(address string) (Client, error) {
 	addr, err := net.ResolveUnixAddr("unix", address)
 	if err != nil {
@@ -90,7 +91,7 @@ func DialUnix(address string) (Client, error) {
 }
 
 // DialUDP creates a new client that
-// operates over UDP
+// operates over UDP. Timeout is set to 1s.
 func DialUDP(address string) (Client, error) {
 	addr, err := net.ResolveUDPAddr("udp", address)
 	if err != nil {
@@ -319,10 +320,9 @@ func (w *waiter) writeCommand(cmd command, msg []byte) error {
 	w.parent.pending[seqn] = w
 	w.parent.mlock.Unlock()
 
-	// write buffered msg
 	var buf bytes.Buffer
 	var empty [leadSize]byte
-	buf.Write(empty[:])
+	buf.Write(empty[:]) // save space for frame
 	buf.WriteByte(byte(cmd))
 	buf.Write(msg)
 
@@ -334,7 +334,7 @@ func (w *waiter) writeCommand(cmd command, msg []byte) error {
 		w.parent.mlock.Lock()
 		delete(w.parent.pending, seqn)
 		w.parent.mlock.Unlock()
-		return errors.New("message too large")
+		return ErrTooLarge
 	}
 
 	putFrame(bts, seqn, fCMD, olen)

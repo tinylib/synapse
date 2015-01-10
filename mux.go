@@ -26,8 +26,7 @@ type Router interface {
 	ServeCall(req Request, res ResponseWriter)
 }
 
-// this is a map for now; hopefully
-// a radix tree in the future
+// this is a map for now
 type mux struct {
 	hlrs map[string]Handler
 }

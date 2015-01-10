@@ -10,12 +10,29 @@ import (
 // and *waiter structures, since they are allocated
 // and de-allocated frequently and predictably.
 
-const arenaSize = 256
+const arenaSize = 512
 
 var (
-	waiters  = newWaitStack(arenaSize)
-	wrappers = newConnStack(arenaSize)
+	waiters  waitStack
+	wrappers connStack
+
+	// stack elements are persistentalloc'd
+	waiterSlab  [arenaSize]waiter
+	wrapperSlab [arenaSize]connWrapper
 )
+
+func init() {
+	// set up the pointers and lock
+	// the waiter semaphores
+	waiterSlab[0].done.Lock()
+	for i := 0; i < (arenaSize - 1); i++ {
+		waiterSlab[i].next = &waiterSlab[i+1]
+		waiterSlab[i+1].done.Lock()
+		wrapperSlab[i].next = &wrapperSlab[i+1]
+	}
+	waiters.top = &waiterSlab[0]
+	wrappers.top = &wrapperSlab[0]
+}
 
 type connStack struct {
 	top  *connWrapper
@@ -25,14 +42,6 @@ type connStack struct {
 type waitStack struct {
 	top  *waiter
 	lock uint32
-}
-
-func newConnStack(size int) *connStack {
-	slab := make([]connWrapper, size)
-	for i := 0; i < (size - 1); i++ {
-		slab[i].next = &slab[i+1]
-	}
-	return &connStack{top: &slab[0]}
 }
 
 func (s *connStack) pop(w io.Writer) (ptr *connWrapper) {
@@ -61,16 +70,6 @@ func (s *connStack) push(ptr *connWrapper) {
 	s.top, ptr.next = ptr, s.top
 	atomic.StoreUint32(&s.lock, 0)
 	return
-}
-
-func newWaitStack(size int) *waitStack {
-	slab := make([]waiter, size)
-	slab[0].done.Lock()
-	for i := 0; i < (size - 1); i++ {
-		slab[i].next = &slab[i+1]
-		slab[i+1].done.Lock()
-	}
-	return &waitStack{top: &slab[0]}
 }
 
 func (s *waitStack) pop(c *client) (ptr *waiter) {

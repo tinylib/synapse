@@ -1,11 +1,10 @@
 package synapse
 
 import (
-	"bufio"
 	"bytes"
+	"github.com/philhofer/fwd"
 	"github.com/philhofer/msgp/msgp"
 	"io"
-	"io/ioutil"
 	"log"
 	"math"
 	"net"
@@ -59,19 +58,12 @@ func (s *server) serve() error {
 }
 
 func readFrame(lead [leadSize]byte) (seq uint64, ft fType, sz int) {
-	seq |= uint64(lead[0]) << 56
-	seq |= uint64(lead[1]) << 48
-	seq |= uint64(lead[2]) << 40
-	seq |= uint64(lead[3]) << 32
-	seq |= uint64(lead[4]) << 24
-	seq |= uint64(lead[5]) << 16
-	seq |= uint64(lead[6]) << 8
-	seq |= uint64(lead[7])
+	seq = (uint64(lead[0]) << 56) | (uint64(lead[1]) << 48) |
+		(uint64(lead[2]) << 40) | (uint64(lead[3]) << 32) |
+		(uint64(lead[4]) << 24) | (uint64(lead[5]) << 16) |
+		(uint64(lead[6]) << 8) | (uint64(lead[7]))
 	ft = fType(lead[8])
-	var usz uint16
-	usz |= uint16(lead[9]) << 8
-	usz |= uint16(lead[10])
-	sz = int(usz)
+	sz = int((uint16(lead[9]) << 8) | uint16(lead[10]))
 	return
 }
 
@@ -102,7 +94,7 @@ type connHandler struct {
 // requests are read synchronously; the responses
 // are written in a spawned goroutine
 func (c *connHandler) connLoop() {
-	brd := bufio.NewReader(c.conn)
+	brd := fwd.NewReaderSize(c.conn, 4096)
 	remote := c.conn.RemoteAddr()
 
 	var lead [leadSize]byte
@@ -114,9 +106,9 @@ func (c *connHandler) connLoop() {
 		//  - read seq, type, sz
 		//  - call handler asynchronously
 
-		_, err := io.ReadFull(brd, lead[:])
+		_, err := brd.ReadFull(lead[:])
 		if err != nil {
-			if err != io.EOF && !strings.Contains(err.Error(), "closed") {
+			if err != io.EOF && err != io.ErrUnexpectedEOF && !strings.Contains(err.Error(), "closed") {
 				log.Printf("server: closing connection (error): %s", err)
 				c.conn.Close()
 				break
@@ -138,7 +130,7 @@ func (c *connHandler) connLoop() {
 				cmd = command(bt)
 			} else {
 				body = make([]byte, sz)
-				_, err = io.ReadFull(brd, body)
+				_, err = brd.ReadFull(body)
 				cmd = command(body[0])
 				body = body[1:]
 			}
@@ -154,7 +146,12 @@ func (c *connHandler) connLoop() {
 		// the only valid frame
 		// type left is fREQ
 		if frame != fREQ {
-			io.CopyN(ioutil.Discard, brd, int64(sz))
+			_, err := brd.Skip(sz)
+			if err != nil {
+				log.Printf("synapse server: closing connection (error): %s", err)
+				c.conn.Close()
+				return
+			}
 			continue
 		}
 
@@ -175,7 +172,7 @@ func (c *connHandler) connLoop() {
 			c.conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
 
 		}
-		_, err = io.ReadFull(brd, w.in)
+		_, err = brd.ReadFull(w.in)
 		if err != nil {
 			log.Printf("synapse server: closing connection (error): %s", err)
 			c.conn.Close()

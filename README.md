@@ -1,7 +1,7 @@
 Synapse
 ========
 
-Synapse is a high-performance, protocol-agnostic, asynchronous RPC framework for the Go programming language.
+Synapse is a high-performance, network-protocol-agnostic, asynchronous RPC framework for the Go programming language.
 
 
 

@@ -9,15 +9,14 @@ import (
 func main() {
 	mux := synapse.NewRouter()
 	mux.HandleFunc("double", func(req synapse.Request, res synapse.ResponseWriter) {
-		var in Num
-		err := req.Decode(&in)
+		var n Num
+		err := req.Decode(&n)
 		if err != nil {
 			res.Error(synapse.BadRequest)
 			return
 		}
-		var out Num
-		out.Value = 2 * in.Value
-		res.Send(&out)
+		n.Value *= 2
+		res.Send(&n)
 	})
 
 	l, err := net.Listen("tcp", "localhost:7000")

@@ -31,22 +31,6 @@ var (
 	ErrTooLarge = errors.New("synapse: message body too large")
 )
 
-// Client is the interface fulfilled
-// by synapse clients.
-type Client interface {
-	// Call asks the server to perform 'method' on 'in' and
-	// return the response to 'out'.
-	Call(method string, in msgp.Marshaler, out msgp.Unmarshaler) error
-
-	// Async writes the request to the connection
-	// and returns a handler that can be used
-	// to wait for the response.
-	Async(method string, in msgp.Marshaler) (AsyncResponse, error)
-
-	// Close closes the client.
-	Close() error
-}
-
 // AsyncResponse is returned by
 // calls to client.Async
 type AsyncResponse interface {
@@ -62,7 +46,7 @@ type AsyncResponse interface {
 // DialTCP creates a new client to the server
 // located at the provided address. Request timeout
 // is set to one second.
-func DialTCP(address string) (Client, error) {
+func DialTCP(address string) (*Client, error) {
 	addr, err := net.ResolveTCPAddr("tcp", address)
 	if err != nil {
 		return nil, err
@@ -72,13 +56,13 @@ func DialTCP(address string) (Client, error) {
 		return nil, err
 	}
 	conn.SetKeepAlive(true)
-	return newClient(conn, 1000)
+	return NewClient(conn, 1000)
 }
 
 // DialUnix creates a new client to the
 // server listening on the provided
 // unix socket address. Timeout is set to 200ms.
-func DialUnix(address string) (Client, error) {
+func DialUnix(address string) (*Client, error) {
 	addr, err := net.ResolveUnixAddr("unix", address)
 	if err != nil {
 		return nil, err
@@ -87,12 +71,12 @@ func DialUnix(address string) (Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newClient(conn, 200)
+	return NewClient(conn, 200)
 }
 
 // DialUDP creates a new client that
 // operates over UDP. Timeout is set to 1s.
-func DialUDP(address string) (Client, error) {
+func DialUDP(address string) (*Client, error) {
 	addr, err := net.ResolveUDPAddr("udp", address)
 	if err != nil {
 		return nil, err
@@ -101,19 +85,15 @@ func DialUDP(address string) (Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newClient(conn, 1000)
+	return NewClient(conn, 1000)
 }
 
 // NewClient creates a new client from an
 // existing net.Conn. Timeout is the maximum time,
 // in milliseconds, to wait for server responses
 // before sending an error to the caller.
-func NewClient(c net.Conn, timeout int64) (Client, error) {
-	return newClient(c, timeout)
-}
-
-func newClient(c net.Conn, timeout int64) (*client, error) {
-	cl := &client{
+func NewClient(c net.Conn, timeout int64) (*Client, error) {
+	cl := &Client{
 		cflag:   1,
 		conn:    c,
 		pending: make(map[uint64]*waiter),
@@ -133,7 +113,9 @@ func newClient(c net.Conn, timeout int64) (*client, error) {
 	return cl, nil
 }
 
-type client struct {
+// Client is a client to
+// a single synapse server.
+type Client struct {
 	conn    net.Conn           // TODO(maybe): make this multiple conns
 	csn     uint64             // sequence number; atomic
 	rtt     int64              // round-trip calculation; nsec; atomic
@@ -142,9 +124,11 @@ type client struct {
 	cflag   uint32             // client state; 1 is open; 0 is closed
 }
 
+// used to transfer control
+// flow to blocking goroutines
 type waiter struct {
 	next   *waiter        // next in linked list, or self
-	parent *client        // parent *client
+	parent *Client        // parent *client
 	done   sync.Mutex     // for notifying response; locked is default
 	err    error          // response error on wakeup, if applicable
 	etime  int64          // enqueue time, for timeout
@@ -152,7 +136,7 @@ type waiter struct {
 	lead   [leadSize]byte // lead for seq, type, sz
 }
 
-func (c *client) forceClose() error {
+func (c *Client) forceClose() error {
 	err := c.conn.Close()
 	if err != nil {
 		return err
@@ -168,10 +152,15 @@ func (c *client) forceClose() error {
 	return nil
 }
 
-func (c *client) Close() error {
+// Close idempotently closes the
+// client's connection to the server.
+// Goroutines blocked waiting for
+// responses from the server will be
+// unblocked with an error after 1 second.
+func (c *Client) Close() error {
 	// already stopped
 	if !atomic.CompareAndSwapUint32(&c.cflag, 1, 0) {
-		return nil
+		return ErrClosed
 	}
 
 	// if we don't have receivers
@@ -196,7 +185,7 @@ func (c *client) Close() error {
 // responses. responses are then
 // filled into the appropriate
 // waiter's input buffer
-func (c *client) readLoop() {
+func (c *Client) readLoop() {
 	var seq uint64
 	var sz int
 	var frame fType
@@ -288,7 +277,7 @@ func (c *client) readLoop() {
 // once every 'msec' milliseconds, check
 // that no waiter has been waiting for longer
 // than 'msec'. if so, dequeue it with an error
-func (c *client) timeoutLoop(msec int64) {
+func (c *Client) timeoutLoop(msec int64) {
 	for {
 		time.Sleep(time.Millisecond * time.Duration(msec))
 		if atomic.LoadUint32(&c.cflag) == 0 {
@@ -440,7 +429,9 @@ func (w *waiter) call(method string, in msgp.Marshaler, out msgp.Unmarshaler) er
 	return w.read(out)
 }
 
-func (c *client) Call(method string, in msgp.Marshaler, out msgp.Unmarshaler) error {
+// Call sends a request to the server with 'in' as the body,
+// and then decodes the response into 'out'.
+func (c *Client) Call(method string, in msgp.Marshaler, out msgp.Unmarshaler) error {
 	// grab a waiter from the heap,
 	// make the call, put it back
 	w := waiters.pop(c)
@@ -450,7 +441,7 @@ func (c *client) Call(method string, in msgp.Marshaler, out msgp.Unmarshaler) er
 }
 
 // doCommand executes a command from the client
-func (c *client) sendCommand(cmd command, msg []byte) error {
+func (c *Client) sendCommand(cmd command, msg []byte) error {
 	w := waiters.pop(c)
 
 	err := w.writeCommand(cmd, msg)
@@ -488,11 +479,11 @@ func (c *client) sendCommand(cmd command, msg []byte) error {
 }
 
 // perform the ping command
-func (c *client) ping() error {
+func (c *Client) ping() error {
 	return c.sendCommand(cmdPing, nil)
 }
 
-// AsyncResponse.Read
+// AsyncResponse.Read implementation
 func (w *waiter) Read(out msgp.Unmarshaler) error {
 	w.done.Lock()
 	if w.err != nil {
@@ -503,7 +494,10 @@ func (w *waiter) Read(out msgp.Unmarshaler) error {
 	return err
 }
 
-func (c *client) Async(method string, in msgp.Marshaler) (AsyncResponse, error) {
+// Async sends a request to the server, but does not
+// wait for a response. The returned AsyncResponse object
+// should be used to decode the response.
+func (c *Client) Async(method string, in msgp.Marshaler) (AsyncResponse, error) {
 	w := waiters.pop(c)
 	err := w.write(method, in)
 	if err != nil {

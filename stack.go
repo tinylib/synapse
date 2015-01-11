@@ -73,7 +73,7 @@ func (s *connStack) push(ptr *connWrapper) {
 	return
 }
 
-func (s *waitStack) pop(c *client) (ptr *waiter) {
+func (s *waitStack) pop(c *Client) (ptr *waiter) {
 	for !atomic.CompareAndSwapUint32(&s.lock, 0, 1) {
 	}
 	if s.top != nil {

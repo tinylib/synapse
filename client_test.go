@@ -135,12 +135,12 @@ func TestUDP(t *testing.T) {
 	}
 	defer cl.Close()
 
-	err = cl.(*client).sendCommand(cmdTime, nil)
+	err = cl.sendCommand(cmdTime, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	t.Logf("UDP 1/2 RTT is %dns", cl.(*client).rtt)
+	t.Logf("UDP 1/2 RTT is %dns", cl.rtt)
 
 	// make 5 requests, then
 	// read 5 responses
@@ -215,12 +215,12 @@ func TestTimer(t *testing.T) {
 
 	defer cl.Close()
 
-	err = cl.(*client).sendCommand(cmdTime, nil)
+	err = cl.sendCommand(cmdTime, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	t.Logf("1/2 RTT is %dns", cl.(*client).rtt)
+	t.Logf("1/2 RTT is %dns", cl.rtt)
 }
 
 // benchmarks the test case above
@@ -357,10 +357,8 @@ func BenchmarkPingRoundtrip(b *testing.B) {
 	b.ReportAllocs()
 	b.SetParallelism(20)
 	b.RunParallel(func(pb *testing.PB) {
-		c := cl.(*client)
-
 		for pb.Next() {
-			err := c.ping()
+			err := cl.ping()
 			if err != nil {
 				b.Fatal(err)
 			}

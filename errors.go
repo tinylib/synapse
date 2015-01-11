@@ -26,7 +26,7 @@ const (
 // handleDialError determines whether or not
 // it should continue to dial the remote address or
 // drop it permanently. doing nothing ignores the error.
-func (c *clusterClient) handleDialError(addr string, err error) {
+func (c *ClusterClient) handleDialError(addr string, err error) {
 	// simplest case: temporary net error
 	if neterr, ok := err.(net.Error); ok {
 		if neterr.Temporary() {
@@ -69,7 +69,7 @@ errno:
 
 // redialPauseLoop is called to wait/loop on dialing
 // a problematic address
-func (c *clusterClient) redialPauseLoop(addr string) {
+func (c *ClusterClient) redialPauseLoop(addr string) {
 	// TODO: smarter backoff
 	// right now we start at 3s and double until 600s, then break
 	log.Println("synapse cluster: entering redial loop for", addr)
@@ -94,7 +94,7 @@ func (c *clusterClient) redialPauseLoop(addr string) {
 
 // handleErr is responsible for figuring out
 // if an error warrants re-dialing a connection
-func (c *clusterClient) handleErr(v *client, err error) {
+func (c *ClusterClient) handleErr(v *Client, err error) {
 
 	// ignore timeouts and user errors
 	// from this package; they don't

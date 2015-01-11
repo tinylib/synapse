@@ -42,10 +42,12 @@ func (j jsp) UnmarshalMsg(b []byte) ([]byte, error) {
 //
 type String string
 
+// MarshalMsg implements msgp.Marshaler
 func (s String) MarshalMsg(b []byte) ([]byte, error) {
 	return msgp.AppendString(b, string(s)), nil
 }
 
+// UnmarshalMsg implements msgp.Unmarshaler
 func (s *String) UnmarshalMsg(b []byte) ([]byte, error) {
 	val, out, err := msgp.ReadStringBytes(b)
 	if err != nil {

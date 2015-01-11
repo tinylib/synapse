@@ -50,7 +50,7 @@ type command byte
 type action interface {
 	// Client is the action carried out on the client side
 	// when it receives a command response from a server
-	Client(c *client, from io.WriteCloser, msg []byte)
+	Client(c *Client, from io.WriteCloser, msg []byte)
 
 	// Sever is the action carried out on the server side. It
 	// should return the reponse message (if any), and any
@@ -89,13 +89,13 @@ const (
 // ping is a no-op on both sides
 type ping struct{}
 
-func (p ping) Client(_ *client, _ io.WriteCloser, _ []byte) {}
+func (p ping) Client(_ *Client, _ io.WriteCloser, _ []byte) {}
 
 func (p ping) Server(_ io.WriteCloser, _ []byte) ([]byte, error) { return nil, nil }
 
 type logTime struct{}
 
-func (t logTime) Client(cl *client, _ io.WriteCloser, res []byte) {
+func (t logTime) Client(cl *Client, _ io.WriteCloser, res []byte) {
 	var tm time.Time
 	err := tm.UnmarshalBinary(res)
 	if err != nil {

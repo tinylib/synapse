@@ -26,7 +26,8 @@ type Request interface {
 	IsNil() bool
 }
 
-// Request implementation
+// Request implementation passed
+// to the root handler of the server.
 type request struct {
 	name string
 	in   []byte

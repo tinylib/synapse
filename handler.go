@@ -1,8 +1,7 @@
 package synapse
 
-// Handler is the interface that
-// is satisfied by handlers to
-// a particular method name
+// Handler is the interface used
+// to register server response callbacks.
 type Handler interface {
 
 	// ServeCall handles a synapse request and
@@ -12,15 +11,9 @@ type Handler interface {
 	// become invalid after the call is returned;
 	// no implementation of ServeCall should
 	// maintain a reference to either object
-	// after the function returns. Doing so will
-	// result in undefined behavior.
+	// after the function returns.
 	ServeCall(req Request, res ResponseWriter)
 }
-
-// shim for handlers as functions
-type handlerFunc func(req Request, res ResponseWriter)
-
-func (f handlerFunc) ServeCall(req Request, res ResponseWriter) { f(req, res) }
 
 // Status represents
 // a response status code
@@ -75,6 +68,6 @@ func (s Status) Error() string {
 	case ServerError:
 		return "server error"
 	default:
-		return "invalid status"
+		return "<invalid status>"
 	}
 }

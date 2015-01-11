@@ -1,9 +1,88 @@
 Synapse
 ========
 
-Synapse is a high-performance, network-protocol-agnostic, asynchronous RPC framework for the Go programming language.
+Synapse is a high-performance, network-protocol-agnostic, asynchronous RPC-ish framework for the Go programming language.
 
+## Goals
 
+Synapse is designed to make it easy to write network applications that have request-response semantics, much 
+like HTTP and (some) RPC protocols. Like `net/rpc`, synapse can operate over most network protocols (or any 
+`net.Conn`), and, like `net/http`, provides a standardized way to write middlewares and routers around services. 
+As an added bonus, synapse has a much smaller per-request and per-connection memory footprint than `net/rpc` or 
+`net/http`.
+
+As a motivating example, let's consider a "hello world" program. (You can find the complete files in `_examples/hello_world/`.)
+
+#### Hello World
+
+Here's what the client code looks like:
+
+```go
+func main() {
+	// This sets up a TCP connection to
+	// localhost:7000 and attaches a client
+	// to it. Client creation fails if it
+	// can't ping the server on the other
+	// end.
+	client, err := synapse.DialTCP("localhost:7000")
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+
+	// Here we make a remote call to
+	// the method called "hello," and
+	// we pass an object for the
+	// response to be decoded into.
+	// synapse.String is a convenience
+	// provided for sending strings
+	// back and forth.
+	var res synapse.String
+	err = client.Call("hello", nil, &res)
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+
+	fmt.Println("response from server:", string(res))
+}
+```
+
+And here's the server code:
+
+```go
+func main() {
+	// Like net/http, synapse uses
+	// routers to send requests to
+	// the appropriate handler(s).
+	// Here we'll use the one provided
+	// by the synapse package, although
+	// users can write their own.
+	router := synapse.NewRouter()
+
+	// Here we're registering the "hello"
+	// route with a function that logs the
+	// remote address of the caller and then
+	// responds with "Hello, World!"
+	router.HandleFunc("hello", func(req synapse.Request, res synapse.ResponseWriter) {
+		fmt.Printf("received request from client at %s; responding w/ hello world\n", req.RemoteAddr())
+		res.Send(synapse.String("Hello, World!"))
+	})
+
+	// We can start up servers on either
+	// net.Listeners or net.Conns. Here
+	// we'll use a listener.
+	l, err := net.Listen("tcp", "localhost:7000")
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+
+	// Serve blocks until the
+	// listener is closed.
+	synapse.Serve(l, router)
+}
+```
 
 ## Suported Protocols
 

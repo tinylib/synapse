@@ -54,9 +54,10 @@ func (s *connStack) pop(w io.Writer) (ptr *connWrapper) {
 		return
 	}
 	atomic.StoreUint32(&s.lock, 0)
-	ptr = &connWrapper{}
+	ptr = &connWrapper{
+		conn: w,
+	}
 	ptr.next = ptr
-	ptr.conn = w
 	return
 }
 
@@ -81,10 +82,13 @@ func (s *waitStack) pop(c *client) (ptr *waiter) {
 		ptr.parent = c
 		return ptr
 	}
-	ptr = &waiter{}
+	atomic.StoreUint32(&s.lock, 0)
+	ptr = &waiter{
+		parent: c,
+	}
+	ptr.next = ptr
 	ptr.done.Lock()
-	ptr.parent = c
-	return ptr
+	return
 }
 
 func (s *waitStack) push(ptr *waiter) {

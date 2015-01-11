@@ -12,6 +12,8 @@ func NewRouter() Router {
 // Router is a server request
 // multiplexer
 type Router interface {
+	Handler
+
 	// Handle registers a handler. Handle should
 	// not be called after a server has started
 	// serving the router.
@@ -21,9 +23,6 @@ type Router interface {
 	// should not be called after a server has
 	// started serving the router.
 	HandleFunc(name string, f func(Request, ResponseWriter))
-
-	// Routers implement the Handler interface
-	ServeCall(req Request, res ResponseWriter)
 }
 
 // this is a map for now

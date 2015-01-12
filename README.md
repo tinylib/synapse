@@ -9,11 +9,17 @@ Synapse is designed to make it easy to write network applications that have requ
 like HTTP and (some) RPC protocols. Like `net/rpc`, synapse can operate over most network protocols (or any 
 `net.Conn`), and, like `net/http`, provides a standardized way to write middlewares and routers around services. 
 As an added bonus, synapse has a much smaller per-request and per-connection memory footprint than `net/rpc` or 
-`net/http`.
+`net/http`, and provides highly scalable transactional throughput.
+
+#### Non-goals
+
+Synapse is not intended to be a replacement for industrial-grade message queue solutions like ZeroMQ, RabbitMQ, etc. 
+Rather, synapse provides a convenient way to bind to a network connection without worrying about message framing, 
+multiplexing, serialization, pipelining, and so on.
 
 As a motivating example, let's consider a "hello world" program. (You can find the complete files in `_examples/hello_world/`.)
 
-#### Hello World
+## Hello World
 
 Here's what the client code looks like:
 
@@ -104,6 +110,5 @@ the mechanics of your transport mechanism when seeking to optimize transaction t
 
 With all that being said, it's fairly simple to achieve transaction throughput on the order of hundreds-of-thousands-per-second with
 only a handful of network connections due to the Synapse wire protocol's out-of-order message processing and Go's lightweight 
-concurrency model. (As of this writing, throughput of a trivial server/handler combo over one unix socket comes in at 312,500 requests 
-per second.) Additionally, both client- and server-side code have been deliberately designed to consume minimal per-request 
+concurrency model. (As of this writing, throughput of a trivial server/handler combo over one unix socket comes in at 312,500 requests per second.) Additionally, both client- and server-side code have been deliberately designed to consume minimal per-request 
 and per-connection resources, particularly heap space.

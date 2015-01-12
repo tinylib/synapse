@@ -1,13 +1,13 @@
 package main
 
 // NOTE: THIS FILE WAS PRODUCED BY THE
-// MSGP CODE GENERATION TOOL (github.com/philhofer/msgp)
+// MSGP CODE GENERATION TOOL (github.com/tinylib/msgp)
 // DO NOT EDIT
 
 import (
 	"testing"
 
-	"github.com/philhofer/msgp/msgp"
+	"github.com/tinylib/msgp/msgp"
 )
 
 func TestNumMarshalUnmarshal(t *testing.T) {

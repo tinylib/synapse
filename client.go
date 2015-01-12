@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/philhofer/fwd"
-	"github.com/philhofer/msgp/msgp"
+	"github.com/tinylib/msgp/msgp"
 	"io"
 	"log"
 	"net"

@@ -2,7 +2,7 @@ package synapse
 
 import (
 	"errors"
-	"github.com/philhofer/msgp/msgp"
+	"github.com/tinylib/msgp/msgp"
 	"log"
 	"net"
 	"sync"

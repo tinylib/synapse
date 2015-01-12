@@ -1,7 +1,7 @@
 package synapse
 
 import (
-	"github.com/philhofer/msgp/msgp"
+	"github.com/tinylib/msgp/msgp"
 )
 
 // A ResponseWriter is the interface through

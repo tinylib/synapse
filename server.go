@@ -3,7 +3,7 @@ package synapse
 import (
 	"bytes"
 	"github.com/philhofer/fwd"
-	"github.com/philhofer/msgp/msgp"
+	"github.com/tinylib/msgp/msgp"
 	"io"
 	"log"
 	"math"

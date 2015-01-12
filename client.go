@@ -1,7 +1,7 @@
 package synapse
 
 import (
-	"bytes"
+	//"bytes"
 	"errors"
 	"fmt"
 	"github.com/philhofer/fwd"
@@ -302,33 +302,25 @@ func (w *waiter) writeCommand(cmd command, msg []byte) error {
 	if atomic.LoadUint32(&w.parent.cflag) == 0 {
 		return ErrClosed
 	}
+	cmdlen := len(msg) + 1
+	if cmdlen > maxMessageSize {
+		return ErrTooLarge
+	}
 
-	// queue
+	// get in pending list
 	seqn := atomic.AddUint64(&w.parent.csn, 1)
 	w.parent.mlock.Lock()
 	w.parent.pending[seqn] = w
 	w.parent.mlock.Unlock()
 
-	var buf bytes.Buffer
-	var empty [leadSize]byte
-	buf.Write(empty[:]) // save space for frame
-	buf.WriteByte(byte(cmd))
-	buf.Write(msg)
+	// write frame + message
+	out := make([]byte, leadSize+cmdlen)
+	putFrame(out, seqn, fCMD, cmdlen)
+	out[leadSize] = byte(cmd)
+	copy(out[leadSize+1:], msg)
 
-	// raw request body
-	bts := buf.Bytes()
-	olen := len(bts) - leadSize
-	if olen > maxMessageSize {
-		// dequeue
-		w.parent.mlock.Lock()
-		delete(w.parent.pending, seqn)
-		w.parent.mlock.Unlock()
-		return ErrTooLarge
-	}
-
-	putFrame(bts, seqn, fCMD, olen)
 	w.etime = time.Now().Unix()
-	_, err := w.parent.conn.Write(bts)
+	_, err := w.parent.conn.Write(out)
 	if err != nil {
 		// dequeue
 		w.parent.mlock.Lock()

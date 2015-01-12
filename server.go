@@ -28,8 +28,22 @@ const (
 
 // Serve starts a server on 'l' that serves
 // the supplied handler. It blocks until the
-// handler closes.
+// listener closes.
 func Serve(l net.Listener, h Handler) error {
+	s := server{l, h}
+	return s.serve()
+}
+
+// ListenAndServe opens up a network listener
+// on the provided network and local address
+// and begins serving with the provided handler.
+// ListenAndServe blocks until there is a fatal
+// listener error.
+func ListenAndServe(network string, laddr string, h Handler) error {
+	l, err := net.Listen(network, laddr)
+	if err != nil {
+		return err
+	}
 	s := server{l, h}
 	return s.serve()
 }

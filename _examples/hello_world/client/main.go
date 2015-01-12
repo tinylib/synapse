@@ -11,8 +11,9 @@ func main() {
 	// localhost:7000 and attaches a client
 	// to it. Client creation fails if it
 	// can't ping the server on the other
-	// end.
-	client, err := synapse.DialTCP("localhost:7000")
+	// end. Additionally, calls will fail
+	// if a response isn't received in 1000 milliseconds (one second).
+	client, err := synapse.Dial("tcp", "localhost:7000", 1000)
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)

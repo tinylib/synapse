@@ -15,6 +15,10 @@ import (
 	"time"
 )
 
+const (
+	defaultTimeout = 3000 // three seconds
+)
+
 var (
 	// ErrClosed is returns when a call is attempted
 	// on a closed client
@@ -43,49 +47,16 @@ type AsyncResponse interface {
 	Read(out msgp.Unmarshaler) error
 }
 
-// DialTCP creates a new client to the server
-// located at the provided address. Request timeout
-// is set to one second.
-func DialTCP(address string) (*Client, error) {
-	addr, err := net.ResolveTCPAddr("tcp", address)
+// Dial creates a new client by dialing
+// the provided network and remote address.
+// The provided timeout is used as the timeout
+// for requests, in milliseconds.
+func Dial(network string, laddr string, timeout int64) (*Client, error) {
+	conn, err := net.Dial(network, laddr)
 	if err != nil {
 		return nil, err
 	}
-	conn, err := net.DialTCP("tcp", nil, addr)
-	if err != nil {
-		return nil, err
-	}
-	conn.SetKeepAlive(true)
-	return NewClient(conn, 1000)
-}
-
-// DialUnix creates a new client to the
-// server listening on the provided
-// unix socket address. Timeout is set to 200ms.
-func DialUnix(address string) (*Client, error) {
-	addr, err := net.ResolveUnixAddr("unix", address)
-	if err != nil {
-		return nil, err
-	}
-	conn, err := net.DialUnix("unix", nil, addr)
-	if err != nil {
-		return nil, err
-	}
-	return NewClient(conn, 200)
-}
-
-// DialUDP creates a new client that
-// operates over UDP. Timeout is set to 1s.
-func DialUDP(address string) (*Client, error) {
-	addr, err := net.ResolveUDPAddr("udp", address)
-	if err != nil {
-		return nil, err
-	}
-	conn, err := net.DialUDP("udp", nil, addr)
-	if err != nil {
-		return nil, err
-	}
-	return NewClient(conn, 1000)
+	return NewClient(conn, timeout)
 }
 
 // NewClient creates a new client from an
@@ -100,6 +71,12 @@ func NewClient(c net.Conn, timeout int64) (*Client, error) {
 	}
 	go cl.readLoop()
 
+	if timeout <= 0 {
+		timeout = defaultTimeout
+	}
+
+	go cl.timeoutLoop(timeout)
+
 	// do a ping to check
 	// for sanity
 	err := cl.ping()
@@ -107,8 +84,6 @@ func NewClient(c net.Conn, timeout int64) (*Client, error) {
 		cl.conn.Close()
 		return nil, fmt.Errorf("synapse client: attempt to ping the server failed: %s", err)
 	}
-
-	go cl.timeoutLoop(timeout)
 
 	return cl, nil
 }

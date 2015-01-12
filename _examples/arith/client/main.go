@@ -13,7 +13,7 @@ type Num struct {
 }
 
 func main() {
-	cl, err := synapse.DialTCP("localhost:7000")
+	cl, err := synapse.Dial("tcp", "localhost:7000", 1000)
 	if err != nil {
 		fmt.Println(err)
 		return

@@ -44,6 +44,15 @@ const (
 // to the other
 type command byte
 
+const maxbyte = 256
+
+// cmdDirectory is a map of all the commands
+// to their respective actions
+var cmdDirectory = [maxbyte]action{
+	cmdPing: ping{},
+	cmdTime: logTime{},
+}
+
 // an action is the consequence
 // of a command - commands are
 // mapped to actions
@@ -57,13 +66,6 @@ type action interface {
 	// error encountered. Errors will result in cmdInvalid
 	// sent to the client.
 	Server(from io.WriteCloser, msg []byte) (res []byte, err error)
-}
-
-// cmdDirectory is a map of all the commands
-// to their respective actions
-var cmdDirectory = map[command]action{
-	cmdPing: ping{},
-	cmdTime: logTime{},
 }
 
 // list of commands

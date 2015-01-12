@@ -25,7 +25,7 @@ func TestClient(t *testing.T) {
 
 	go Serve(l, mux)
 
-	cl, err := DialTCP("localhost:7000")
+	cl, err := Dial("tcp", "localhost:7000", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +78,7 @@ func TestAsyncClient(t *testing.T) {
 
 	go Serve(l, EchoHandler{})
 
-	cl, err := DialTCP("localhost:7000")
+	cl, err := Dial("tcp", "localhost:7000", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +129,7 @@ func TestUDP(t *testing.T) {
 		time.Sleep(1 * time.Millisecond)
 	}()
 
-	cl, err := DialUDP("127.0.0.1:7000")
+	cl, err := Dial("udp", "127.0.0.1:7000", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,7 +182,7 @@ func TestNop(t *testing.T) {
 
 	go Serve(l, NopHandler{})
 
-	cl, err := DialTCP("localhost:7000")
+	cl, err := Dial("tcp", "localhost:7000", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,7 +208,7 @@ func TestTimer(t *testing.T) {
 
 	go Serve(l, EchoHandler{})
 
-	cl, err := DialTCP("localhost:7000")
+	cl, err := Dial("tcp", "localhost:7000", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,7 +237,7 @@ func BenchmarkTCPEcho(b *testing.B) {
 	mux.Handle("echo", EchoHandler{})
 
 	go Serve(l, mux)
-	cl, err := DialTCP("localhost:7000")
+	cl, err := Dial("tcp", "localhost:7000", 1)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -276,7 +276,7 @@ func BenchmarkUnixNoop(b *testing.B) {
 		time.Sleep(1 * time.Millisecond)
 	}()
 	go Serve(l, NopHandler{})
-	cl, err := DialUnix("synapse")
+	cl, err := Dial("unix", "synapse", 5)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -312,7 +312,7 @@ func BenchmarkUDPEcho(b *testing.B) {
 
 	go ServePacket(l, EchoHandler{})
 
-	cl, err := DialUDP("127.0.0.1:7000")
+	cl, err := Dial("udp", "127.0.0.1:7000", 5)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -347,7 +347,7 @@ func BenchmarkPingRoundtrip(b *testing.B) {
 		time.Sleep(1 * time.Millisecond)
 	}()
 	go Serve(l, EchoHandler{})
-	cl, err := DialUnix("synapse")
+	cl, err := Dial("unix", "synapse", 1)
 	if err != nil {
 		b.Fatal(err)
 	}

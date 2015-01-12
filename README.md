@@ -23,8 +23,9 @@ func main() {
 	// localhost:7000 and attaches a client
 	// to it. Client creation fails if it
 	// can't ping the server on the other
-	// end.
-	client, err := synapse.DialTCP("localhost:7000")
+	// end. Additionally, calls will fail
+	// if a response isn't received in 1000 milliseconds (one second).
+	client, err := synapse.Dial("tcp", "localhost:7000", 1000)
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)
@@ -65,22 +66,13 @@ func main() {
 	// remote address of the caller and then
 	// responds with "Hello, World!"
 	router.HandleFunc("hello", func(req synapse.Request, res synapse.ResponseWriter) {
-		fmt.Printf("received request from client at %s; responding w/ hello world\n", req.RemoteAddr())
+		log.Println("received request from client at", req.RemoteAddr())
 		res.Send(synapse.String("Hello, World!"))
 	})
 
-	// We can start up servers on either
-	// net.Listeners or net.Conns. Here
-	// we'll use a listener.
-	l, err := net.Listen("tcp", "localhost:7000")
-	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
-	}
-
-	// Serve blocks until the
-	// listener is closed.
-	synapse.Serve(l, router)
+	// ListenAndServe blocks forever
+	// serving the provided handler.
+	log.Fatalln(synapse.ListenAndServe("tcp", "localhost:7000", router))
 }
 ```
 

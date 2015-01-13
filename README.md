@@ -82,10 +82,13 @@ func main() {
 }
 ```
 
+## Project Status
+
+Very alpha. Expect frequent breaking changes to the API. We're actively looking for community feedback.
+
 ## Suported Protocols
 
-The following protocols are explicitly tested and
-explicitly supported:
+The following protocols are explicitly tested and supported:
 
  - TCP
  - UDP

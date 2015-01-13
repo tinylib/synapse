@@ -1,7 +1,6 @@
 package synapse
 
 import (
-	//"bytes"
 	"errors"
 	"fmt"
 	"github.com/philhofer/fwd"

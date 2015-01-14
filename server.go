@@ -76,7 +76,8 @@ func ListenAndServe(network string, laddr string, h Handler) error {
 // connection. It blocks until the connection
 // is closed.
 func ServeConn(c net.Conn, h Handler) {
-	ch := connHandler{conn: c, h: h}
+	ch := connHandler{conn: c, h: h, writing: make(chan *connWrapper, 32)}
+	go ch.writeLoop()
 	ch.connLoop()
 }
 
@@ -124,8 +125,42 @@ func putFrame(bts []byte, seq uint64, ft fType, sz int) {
 // connections and multiplexes requests
 // to connWrappers
 type connHandler struct {
-	h    Handler
-	conn net.Conn
+	h       Handler
+	conn    net.Conn
+	writing chan *connWrapper
+}
+
+func (c *connHandler) writeLoop() {
+	bwr := fwd.NewWriter(c.conn)
+
+wait:
+	for {
+		cw, ok := <-c.writing
+		if !ok {
+			return
+		}
+		_, err := bwr.Write(cw.res.out)
+		if err != nil {
+			log.Println(err)
+		}
+		wrappers.push(cw)
+		for {
+			select {
+			case another := <-c.writing:
+				_, err = bwr.Write(another.res.out)
+				wrappers.push(another)
+				if err != nil {
+					log.Println(err)
+				}
+			default:
+				err = bwr.Flush()
+				if err != nil {
+					log.Println(err)
+				}
+				goto wait
+			}
+		}
+	}
 }
 
 // connLoop continuously polls the connection.
@@ -193,7 +228,7 @@ func (c *connHandler) connLoop() {
 			continue
 		}
 
-		w := wrappers.pop(c.conn)
+		w := wrappers.pop()
 
 		if cap(w.in) >= sz {
 			w.in = w.in[0:sz]
@@ -224,7 +259,7 @@ func (c *connHandler) connLoop() {
 
 		// trigger handler
 		w.seq = seq
-		go handleReq(w, remote, c.h)
+		go c.handleReq(w, remote)
 	}
 }
 
@@ -236,13 +271,12 @@ type connWrapper struct {
 	in   []byte       // incoming message
 	req  request
 	res  response
-	conn io.Writer
 }
 
 // handleconn sets up the Request and ResponseWriter
 // interfaces and calls the handler.
 // output is written to cw.parent.conn
-func handleReq(cw *connWrapper, remote net.Addr, h Handler) {
+func (c *connHandler) handleReq(cw *connWrapper, remote net.Addr) {
 	// clear/reset everything
 	cw.req.addr = remote
 	cw.res.wrote = false
@@ -252,7 +286,7 @@ func handleReq(cw *connWrapper, remote net.Addr, h Handler) {
 	if err != nil {
 		cw.res.Error(BadRequest)
 	} else {
-		h.ServeCall(&cw.req, &cw.res)
+		c.h.ServeCall(&cw.req, &cw.res)
 		// if the handler didn't write a body
 		if !cw.res.wrote {
 			cw.res.Send(nil)
@@ -262,12 +296,14 @@ func handleReq(cw *connWrapper, remote net.Addr, h Handler) {
 	blen := len(cw.res.out) - leadSize // length minus frame length
 	putFrame(cw.res.out, cw.seq, fRES, blen)
 
-	_, err = cw.conn.Write(cw.res.out)
-	if err != nil {
-		// TODO: print something more usefull...?
-		log.Printf("synapse server: error writing response: %s", err)
-	}
-	wrappers.push(cw)
+	c.writing <- cw
+	/*
+		_, err = cw.conn.Write(cw.res.out)
+		if err != nil {
+			// TODO: print something more usefull...?
+			log.Printf("synapse server: error writing response: %s", err)
+		}
+	wrappers.push(cw)*/
 }
 
 func handleCmd(w io.WriteCloser, seq uint64, cmd command, body []byte) {

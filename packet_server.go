@@ -1,5 +1,6 @@
 package synapse
 
+/*
 import (
 	"encoding/binary"
 	"io"
@@ -7,6 +8,7 @@ import (
 	"net"
 	"strings"
 )
+
 
 // ServePacket creates a server that serves
 // a packet-oriented connection created by
@@ -101,3 +103,4 @@ func (c pconnHandler) pconnLoop() error {
 		go handleReq(w, remote, c.h)
 	}
 }
+*/

@@ -111,6 +111,7 @@ func TestAsyncClient(t *testing.T) {
 
 }
 
+/*
 func TestUDP(t *testing.T) {
 	local, err := net.ResolveUDPAddr("udp", ":7000")
 	if err != nil {
@@ -165,7 +166,7 @@ func TestUDP(t *testing.T) {
 			t.Errorf("%q in; %q out", instr, outstr)
 		}
 	}
-}
+}*/
 
 // test that 'nil' is a safe
 // argument to requests and responses
@@ -296,6 +297,7 @@ func BenchmarkUnixNoop(b *testing.B) {
 	b.StopTimer()
 }
 
+/*
 func BenchmarkUDPEcho(b *testing.B) {
 	local, err := net.ResolveUDPAddr("udp", "127.0.0.1:7000")
 	if err != nil {
@@ -335,7 +337,7 @@ func BenchmarkUDPEcho(b *testing.B) {
 		}
 	})
 	b.StopTimer()
-}
+}*/
 
 func BenchmarkPingRoundtrip(b *testing.B) {
 	l, err := net.Listen("unix", "synapse")

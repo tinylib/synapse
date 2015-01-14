@@ -79,8 +79,10 @@ func NewClient(c net.Conn, timeout int64) (*Client, error) {
 		cflag:   1,
 		conn:    c,
 		pending: make(map[uint64]*waiter),
+		//writing: make(chan *waiter, 32),
 	}
 	go cl.readLoop()
+	//go cl.writeLoop()
 
 	if timeout <= 0 {
 		timeout = defaultTimeout
@@ -108,6 +110,7 @@ type Client struct {
 	mlock   sync.Mutex         // to protect map access
 	pending map[uint64]*waiter // map seq number to waiting handler
 	cflag   uint32             // client state; 1 is open; 0 is closed
+	//writing chan *waiter
 }
 
 // used to transfer control
@@ -127,6 +130,8 @@ func (c *Client) forceClose() error {
 	if err != nil {
 		return err
 	}
+
+	//close(c.writing)
 
 	// flush all waiters
 	c.mlock.Lock()
@@ -260,6 +265,45 @@ func (c *Client) readLoop() {
 	}
 }
 
+/*
+func (c *Client) writeLoop() {
+	bwr := fwd.NewWriter(c.conn)
+
+wait:
+	for {
+		// wait for one write
+		wt, ok := <-c.writing
+		if !ok {
+			return
+		}
+		// write it
+		_, err := bwr.Write(wt.in)
+		if err != nil {
+			log.Println(err)
+		}
+		// try to match this write
+		// with other writes
+		for {
+			select {
+			case another := <-c.writing:
+				if another != nil {
+					_, err = bwr.Write(another.in)
+					if err != nil {
+						log.Println(err)
+					}
+				}
+			// flush
+			default:
+				err = bwr.Flush()
+				if err != nil {
+					log.Println(err)
+				}
+				goto wait
+			}
+		}
+	}
+}*/
+
 // once every 'msec' milliseconds, check
 // that no waiter has been waiting for longer
 // than 'msec'. if so, dequeue it with an error
@@ -371,7 +415,6 @@ func (w *waiter) write(method string, in msgp.Marshaler) error {
 
 	_, err = w.parent.conn.Write(w.in)
 	if err != nil {
-		// dequeue
 		w.parent.mlock.Lock()
 		delete(w.parent.pending, sn)
 		w.parent.mlock.Unlock()

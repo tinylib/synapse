@@ -1,7 +1,6 @@
 package synapse
 
 import (
-	"bytes"
 	"crypto/tls"
 	"io"
 	"log"
@@ -131,35 +130,56 @@ type connHandler struct {
 }
 
 func (c *connHandler) writeLoop() {
-	bwr := fwd.NewWriter(c.conn)
+	bwr := fwd.NewWriterSize(c.conn, 4096)
 
-wait:
+	// this works the same way
+	// as (*client).writeLoop()
+	//
+	// the goroutine wakes up when
+	// there are pending messages
+	// to write. it writes the first
+	// one into the buffered writer,
+	// and continues to fill the
+	// buffered writer until
+	// no more messages are pending,
+	// and then flushes whatever is
+	// left.
 	for {
 		cw, ok := <-c.writing
 		if !ok {
+			bwr.Flush()
 			return
 		}
 		_, err := bwr.Write(cw.res.out)
 		if err != nil {
-			log.Println(err)
+			c.logfatal(err)
+			return
 		}
 		wrappers.push(cw)
-		for {
-			select {
-			case another := <-c.writing:
-				_, err = bwr.Write(another.res.out)
-				wrappers.push(another)
-				if err != nil {
-					log.Println(err)
-				}
-			default:
-				err = bwr.Flush()
-				if err != nil {
-					log.Println(err)
-				}
-				goto wait
+	more:
+		select {
+		case another := <-c.writing:
+			_, err = bwr.Write(another.res.out)
+			wrappers.push(another)
+			if err != nil {
+				c.logfatal(err)
+				return
 			}
+			goto more
+		default:
 		}
+		err = bwr.Flush()
+		if err != nil {
+			c.logfatal(err)
+			return
+		}
+	}
+}
+
+func (c *connHandler) logfatal(err error) {
+	if err != io.EOF && err != io.ErrUnexpectedEOF && !strings.Contains(err.Error(), "closed") {
+		log.Printf("synapse server: closing connection (error): %s", err)
+		c.conn.Close()
 	}
 }
 
@@ -181,11 +201,7 @@ func (c *connHandler) connLoop() {
 
 		_, err := brd.ReadFull(lead[:])
 		if err != nil {
-			if err != io.EOF && err != io.ErrUnexpectedEOF && !strings.Contains(err.Error(), "closed") {
-				log.Printf("server: closing connection (error): %s", err)
-				c.conn.Close()
-				break
-			}
+			c.logfatal(err)
 			return
 		}
 		seq, frame, sz = readFrame(lead)
@@ -208,11 +224,10 @@ func (c *connHandler) connLoop() {
 				body = body[1:]
 			}
 			if err != nil {
-				log.Printf("synapse server: closing connection (error): %s", err)
-				c.conn.Close()
+				c.logfatal(err)
 				return
 			}
-			go handleCmd(c.conn, seq, cmd, body)
+			go handleCmd(c, seq, cmd, body)
 			continue
 		}
 
@@ -221,8 +236,7 @@ func (c *connHandler) connLoop() {
 		if frame != fREQ {
 			_, err := brd.Skip(sz)
 			if err != nil {
-				log.Printf("synapse server: closing connection (error): %s", err)
-				c.conn.Close()
+				c.logfatal(err)
 				return
 			}
 			continue
@@ -247,14 +261,12 @@ func (c *connHandler) connLoop() {
 		}
 		_, err = brd.ReadFull(w.in)
 		if err != nil {
-			log.Printf("synapse server: closing connection (error): %s", err)
-			c.conn.Close()
-			break
+			c.logfatal(err)
+			return
 		}
 		// clear read deadline
 		if deadline {
 			c.conn.SetReadDeadline(time.Time{})
-
 		}
 
 		// trigger handler
@@ -275,19 +287,21 @@ type connWrapper struct {
 
 // handleconn sets up the Request and ResponseWriter
 // interfaces and calls the handler.
-// output is written to cw.parent.conn
 func (c *connHandler) handleReq(cw *connWrapper, remote net.Addr) {
 	// clear/reset everything
 	cw.req.addr = remote
 	cw.res.wrote = false
 
 	var err error
+
+	// split request into 'name' and body
 	cw.req.name, cw.req.in, err = msgp.ReadStringBytes(cw.in)
 	if err != nil {
 		cw.res.Error(BadRequest)
 	} else {
 		c.h.ServeCall(&cw.req, &cw.res)
-		// if the handler didn't write a body
+		// if the handler didn't write a body,
+		// write 'nil'
 		if !cw.res.wrote {
 			cw.res.Send(nil)
 		}
@@ -297,50 +311,38 @@ func (c *connHandler) handleReq(cw *connWrapper, remote net.Addr) {
 	putFrame(cw.res.out, cw.seq, fRES, blen)
 
 	c.writing <- cw
-	/*
-		_, err = cw.conn.Write(cw.res.out)
-		if err != nil {
-			// TODO: print something more usefull...?
-			log.Printf("synapse server: error writing response: %s", err)
-		}
-	wrappers.push(cw)*/
 }
 
-func handleCmd(w io.WriteCloser, seq uint64, cmd command, body []byte) {
-	var (
-		buf  bytes.Buffer
-		lead [leadSize + 1]byte // one extra, b/c we always write cmd
-		res  []byte
-	)
-
-	lead[leadSize] = byte(cmd)
-
+func handleCmd(c *connHandler, seq uint64, cmd command, body []byte) {
 	act := cmdDirectory[cmd]
+	resbyte := byte(cmd)
+	var res []byte
 	var err error
 	if act == nil {
-		lead[leadSize] = byte(cmdInvalid)
+		resbyte = byte(cmdInvalid)
 	} else {
-		res, err = act.Server(w, body)
+		res, err = act.Server(c.conn, body)
 		if err != nil {
-			lead[leadSize] = byte(cmdInvalid)
+			resbyte = byte(cmdInvalid)
 		}
 	}
 
+	// for now, we'll use one of the
+	// connection wrappers
+	wr := wrappers.pop()
+
 	sz := len(res) + 1
-	putFrame(lead[:], seq, fCMD, sz)
-
-	var bts []byte
-
-	if sz == 1 {
-		bts = lead[:]
+	need := sz + leadSize
+	if cap(wr.res.out) < need {
+		wr.res.out = make([]byte, need)
 	} else {
-		buf.Write(lead[:])
-		buf.Write(res)
-		bts = buf.Bytes()
+		wr.res.out = wr.res.out[:need]
 	}
 
-	_, err = w.Write(bts)
-	if err != nil {
-		log.Printf("synapse server: error: %s", err)
+	putFrame(wr.res.out[:], seq, fCMD, sz)
+	wr.res.out[leadSize] = resbyte
+	if res != nil {
+		copy(wr.res.out[leadSize+1:], res)
 	}
+	c.writing <- wr
 }

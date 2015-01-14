@@ -88,10 +88,10 @@ Very alpha. Expect frequent breaking changes to the API. We're actively looking 
 
 ## Suported Protocols
 
-The following protocols are explicitly tested and supported:
+The following protocols are explicitly supported:
 
  - TCP
- - UDP
+ - TLS
  - Unix sockets
 
 Additionally, you can create clients and servers that use anything that satisfies the `net.Conn` interface.

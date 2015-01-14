@@ -109,20 +109,19 @@ type Client struct {
 	rtt     int64              // round-trip calculation; nsec; atomic
 	mlock   sync.Mutex         // to protect map access
 	pending map[uint64]*waiter // map seq number to waiting handler
+	writing chan *waiter       // queue to write to conn
 	cflag   uint32             // client state; 1 is open; 0 is closed
-	writing chan *waiter
 }
 
 // used to transfer control
 // flow to blocking goroutines
 type waiter struct {
-	next   *waiter        // next in linked list, or self
-	parent *Client        // parent *client
-	done   sync.Mutex     // for notifying response; locked is default
-	err    error          // response error on wakeup, if applicable
-	etime  int64          // enqueue time, for timeout
-	in     []byte         // response body
-	lead   [leadSize]byte // lead for seq, type, sz
+	next   *waiter    // next in linked list, or self
+	parent *Client    // parent *client
+	done   sync.Mutex // for notifying response; locked is default
+	err    error      // response error on wakeup, if applicable
+	etime  int64      // enqueue time, for timeout
+	in     []byte     // response body
 }
 
 func (c *Client) forceClose() error {
@@ -268,7 +267,6 @@ func (c *Client) readLoop() {
 func (c *Client) writeLoop() {
 	bwr := fwd.NewWriterSize(c.conn, 4096)
 
-wait:
 	for {
 		// wait for one write
 		wt, ok := <-c.writing
@@ -278,28 +276,36 @@ wait:
 		// write it
 		_, err := bwr.Write(wt.in)
 		if err != nil {
-			log.Println(err)
+			c.neterr(err)
+			return
 		}
 		// try to match this write
 		// with other writes
-		for {
-			select {
-			case another := <-c.writing:
-				if another != nil {
-					_, err = bwr.Write(another.in)
-					if err != nil {
-						log.Println(err)
-					}
-				}
-			// flush; go back to waiting
-			default:
-				err = bwr.Flush()
+	more:
+		select {
+		case another := <-c.writing:
+			if another != nil {
+				_, err = bwr.Write(another.in)
 				if err != nil {
-					log.Println(err)
+					c.neterr(err)
+					return
 				}
-				goto wait
 			}
+			goto more
+		default:
 		}
+		err = bwr.Flush()
+		if err != nil {
+			c.neterr(err)
+			return
+		}
+	}
+}
+
+func (c *Client) neterr(err error) {
+	if !(atomic.LoadUint32(&c.cflag) == 0) {
+		log.Println("synapse client: fatal:", err)
+		c.Close()
 	}
 }
 

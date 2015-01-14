@@ -79,10 +79,10 @@ func NewClient(c net.Conn, timeout int64) (*Client, error) {
 		cflag:   1,
 		conn:    c,
 		pending: make(map[uint64]*waiter),
-		//writing: make(chan *waiter, 32),
+		writing: make(chan *waiter, 32),
 	}
 	go cl.readLoop()
-	//go cl.writeLoop()
+	go cl.writeLoop()
 
 	if timeout <= 0 {
 		timeout = defaultTimeout
@@ -110,7 +110,7 @@ type Client struct {
 	mlock   sync.Mutex         // to protect map access
 	pending map[uint64]*waiter // map seq number to waiting handler
 	cflag   uint32             // client state; 1 is open; 0 is closed
-	//writing chan *waiter
+	writing chan *waiter
 }
 
 // used to transfer control
@@ -131,7 +131,7 @@ func (c *Client) forceClose() error {
 		return err
 	}
 
-	//close(c.writing)
+	close(c.writing)
 
 	// flush all waiters
 	c.mlock.Lock()
@@ -265,9 +265,8 @@ func (c *Client) readLoop() {
 	}
 }
 
-/*
 func (c *Client) writeLoop() {
-	bwr := fwd.NewWriter(c.conn)
+	bwr := fwd.NewWriterSize(c.conn, 4096)
 
 wait:
 	for {
@@ -292,7 +291,7 @@ wait:
 						log.Println(err)
 					}
 				}
-			// flush
+			// flush; go back to waiting
 			default:
 				err = bwr.Flush()
 				if err != nil {
@@ -302,7 +301,7 @@ wait:
 			}
 		}
 	}
-}*/
+}
 
 // once every 'msec' milliseconds, check
 // that no waiter has been waiting for longer
@@ -412,14 +411,7 @@ func (w *waiter) write(method string, in msgp.Marshaler) error {
 	}
 
 	putFrame(w.in, sn, fREQ, olen)
-
-	_, err = w.parent.conn.Write(w.in)
-	if err != nil {
-		w.parent.mlock.Lock()
-		delete(w.parent.pending, sn)
-		w.parent.mlock.Unlock()
-		return err
-	}
+	w.parent.writing <- w
 	return nil
 }
 

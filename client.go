@@ -343,20 +343,18 @@ func (w *waiter) writeCommand(cmd command, msg []byte) error {
 	w.parent.mlock.Unlock()
 
 	// write frame + message
-	out := make([]byte, leadSize+cmdlen)
-	putFrame(out, seqn, fCMD, cmdlen)
-	out[leadSize] = byte(cmd)
-	copy(out[leadSize+1:], msg)
+	need := leadSize + cmdlen
+	if cap(w.in) >= need {
+		w.in = w.in[:need]
+	} else {
+		w.in = make([]byte, need)
+	}
+	putFrame(w.in, seqn, fCMD, cmdlen)
+	w.in[leadSize] = byte(cmd)
+	copy(w.in[leadSize+1:], msg)
 
 	w.etime = time.Now().Unix()
-	_, err := w.parent.conn.Write(out)
-	if err != nil {
-		// dequeue
-		w.parent.mlock.Lock()
-		delete(w.parent.pending, seqn)
-		w.parent.mlock.Unlock()
-		return err
-	}
+	w.parent.writing <- w
 	return nil
 }
 

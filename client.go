@@ -1,10 +1,9 @@
 package synapse
 
 import (
+	"crypto/tls"
 	"errors"
 	"fmt"
-	"github.com/philhofer/fwd"
-	"github.com/tinylib/msgp/msgp"
 	"io"
 	"log"
 	"net"
@@ -12,6 +11,9 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/philhofer/fwd"
+	"github.com/tinylib/msgp/msgp"
 )
 
 const (
@@ -52,6 +54,16 @@ type AsyncResponse interface {
 // for requests, in milliseconds.
 func Dial(network string, laddr string, timeout int64) (*Client, error) {
 	conn, err := net.Dial(network, laddr)
+	if err != nil {
+		return nil, err
+	}
+	return NewClient(conn, timeout)
+}
+
+// DialTLS acts identically to Dial, except that it dials the connection
+// over TLS using the provided *tls.Config.
+func DialTLS(network, laddr string, timeout int64, config *tls.Config) (*Client, error) {
+	conn, err := tls.Dial(network, laddr, config)
 	if err != nil {
 		return nil, err
 	}

@@ -2,14 +2,16 @@ package synapse
 
 import (
 	"bytes"
-	"github.com/philhofer/fwd"
-	"github.com/tinylib/msgp/msgp"
+	"crypto/tls"
 	"io"
 	"log"
 	"math"
 	"net"
 	"strings"
 	"time"
+
+	"github.com/philhofer/fwd"
+	"github.com/tinylib/msgp/msgp"
 )
 
 const (
@@ -30,6 +32,28 @@ const (
 // the supplied handler. It blocks until the
 // listener closes.
 func Serve(l net.Listener, h Handler) error {
+	s := server{l, h}
+	return s.serve()
+}
+
+// ListenAndServeTLS acts identically to ListenAndServe, except that
+// it expects connections over TLS1.2 (see crypto/tls). Additionally,
+// files containing a certificate and matching private key for the
+// server must be provided. If the certificate is signed by a
+// certificate authority, the certFile should be the concatenation of
+// the server's certificate followed by the CA's certificate.
+func ListenAndServeTLS(network, laddr string, certFile, keyFile string, h Handler) error {
+	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		return err
+	}
+
+	l, err := tls.Listen(network, laddr, &tls.Config{
+		Certificates: []tls.Certificate{cert},
+	})
+	if err != nil {
+		return err
+	}
 	s := server{l, h}
 	return s.serve()
 }

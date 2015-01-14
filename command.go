@@ -2,7 +2,6 @@ package synapse
 
 import (
 	"io"
-	"sync/atomic"
 	"time"
 )
 
@@ -50,7 +49,6 @@ const maxbyte = 256
 // to their respective actions
 var cmdDirectory = [maxbyte]action{
 	cmdPing: ping{},
-	cmdTime: logTime{},
 }
 
 // an action is the consequence
@@ -80,33 +78,21 @@ const (
 	// simple ping
 	// command
 	cmdPing
-
-	// timer is a
-	// command to
-	// gather connection
-	// timing information
-	cmdTime
 )
 
 // ping is a no-op on both sides
 type ping struct{}
 
-func (p ping) Client(_ *Client, _ io.WriteCloser, _ []byte) {}
-
-func (p ping) Server(_ io.WriteCloser, _ []byte) ([]byte, error) { return nil, nil }
-
-type logTime struct{}
-
-func (t logTime) Client(cl *Client, _ io.WriteCloser, res []byte) {
+func (p ping) Client(cl *Client, _ io.WriteCloser, res []byte) {
 	var tm time.Time
 	err := tm.UnmarshalBinary(res)
 	if err != nil {
 		return
 	}
 	d := time.Since(tm)
-	atomic.StoreInt64(&cl.rtt, d.Nanoseconds())
+	cl.logger.Printf("PONG from %s took %s", cl.conn.RemoteAddr(), d)
 }
 
-func (t logTime) Server(_ io.WriteCloser, _ []byte) ([]byte, error) {
+func (p ping) Server(_ io.WriteCloser, _ []byte) ([]byte, error) {
 	return time.Now().MarshalBinary()
 }

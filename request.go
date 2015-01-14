@@ -29,9 +29,10 @@ type Request interface {
 // Request implementation passed
 // to the root handler of the server.
 type request struct {
-	name string
-	in   []byte
-	addr net.Addr
+	name string   // method name
+	addr net.Addr // remote address
+	in   []byte   // body
+	_    [8]byte  // pad
 }
 
 func (r *request) Name() string         { return r.name }

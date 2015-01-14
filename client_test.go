@@ -111,62 +111,6 @@ func TestAsyncClient(t *testing.T) {
 
 }
 
-func TestUDP(t *testing.T) {
-	local, err := net.ResolveUDPAddr("udp", ":7000")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	sconn, err := net.ListenUDP("udp", local)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	go ServePacket(sconn, EchoHandler{})
-
-	defer func() {
-		sconn.Close()
-		time.Sleep(1 * time.Millisecond)
-	}()
-
-	cl, err := Dial("udp", "127.0.0.1:7000", 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer cl.Close()
-
-	err = cl.sendCommand(cmdTime, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	t.Logf("UDP 1/2 RTT is %dns", cl.rtt)
-
-	// make 5 requests, then
-	// read 5 responses
-	const concurrent = 5
-	hlrs := make([]AsyncResponse, concurrent)
-	instr := testData("hello, world!")
-	for i := 0; i < concurrent; i++ {
-		hlrs[i], err = cl.Async("any", &instr)
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	for i := range hlrs {
-		var outstr testData
-		err = hlrs[i].Read(&outstr)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		if !bytes.Equal([]byte(instr), []byte(outstr)) {
-			t.Errorf("%q in; %q out", instr, outstr)
-		}
-	}
-}
-
 // test that 'nil' is a safe
 // argument to requests and responses
 func TestNop(t *testing.T) {
@@ -195,32 +139,42 @@ func TestNop(t *testing.T) {
 	}
 }
 
-func TestTimer(t *testing.T) {
+// this is mostly designed to tickle
+// data races, not to test any functionality
+// in particular.
+func TestRaceForClose(t *testing.T) {
 	l, err := net.Listen("tcp", "localhost:7000")
 	if err != nil {
 		t.Fatal(err)
 	}
-
 	defer func() {
 		l.Close()
 		time.Sleep(1 * time.Millisecond)
 	}()
-
 	go Serve(l, EchoHandler{})
-
 	cl, err := Dial("tcp", "localhost:7000", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
+	in := testData("hello, world")
+	var out testData
 
-	defer cl.Close()
-
-	err = cl.sendCommand(cmdTime, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	t.Logf("1/2 RTT is %dns", cl.rtt)
+	wg := new(sync.WaitGroup)
+	wg.Add(2)
+	go func() {
+		err := cl.Call("any", &in, &out)
+		if err != nil && err != ErrClosed {
+			t.Error("(*Client).Call returned", err)
+		}
+		wg.Done()
+	}()
+	go func() {
+		if err := cl.Close(); err != nil {
+			t.Error("(*Client).Close returned", err)
+		}
+		wg.Done()
+	}()
+	wg.Wait()
 }
 
 // benchmarks the test case above
@@ -288,77 +242,6 @@ func BenchmarkUnixNoop(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			err := cl.Call("any", nil, nil)
-			if err != nil {
-				b.Fatal(err)
-			}
-		}
-	})
-	b.StopTimer()
-}
-
-func BenchmarkUDPEcho(b *testing.B) {
-	local, err := net.ResolveUDPAddr("udp", "127.0.0.1:7000")
-	if err != nil {
-		b.Fatal(err)
-	}
-	l, err := net.ListenUDP("udp", local)
-	if err != nil {
-		b.Fatal(err)
-	}
-	defer func() {
-		l.Close()
-		time.Sleep(1 * time.Millisecond)
-	}()
-
-	go ServePacket(l, EchoHandler{})
-
-	cl, err := Dial("udp", "127.0.0.1:7000", 5)
-	if err != nil {
-		b.Fatal(err)
-	}
-	defer cl.Close()
-
-	b.ResetTimer()
-	b.ReportAllocs()
-	b.SetParallelism(20)
-	b.RunParallel(func(pb *testing.PB) {
-		instr := testData("hello, world!")
-		var outstr testData
-		for pb.Next() {
-			err = cl.Call("any", &instr, &outstr)
-			if err != nil {
-				b.Fatal(err)
-			}
-			if !bytes.Equal([]byte(instr), []byte(outstr)) {
-				b.Fatalf("%q in; %q out", instr, outstr)
-			}
-		}
-	})
-	b.StopTimer()
-}
-
-func BenchmarkPingRoundtrip(b *testing.B) {
-	l, err := net.Listen("unix", "synapse")
-	if err != nil {
-		b.Fatal(err)
-	}
-	defer func() {
-		l.Close()
-		time.Sleep(1 * time.Millisecond)
-	}()
-	go Serve(l, EchoHandler{})
-	cl, err := Dial("unix", "synapse", 1)
-	if err != nil {
-		b.Fatal(err)
-	}
-	defer cl.Close()
-
-	b.ResetTimer()
-	b.ReportAllocs()
-	b.SetParallelism(20)
-	b.RunParallel(func(pb *testing.PB) {
-		for pb.Next() {
-			err := cl.ping()
 			if err != nil {
 				b.Fatal(err)
 			}

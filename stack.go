@@ -1,8 +1,8 @@
 package synapse
 
 import (
+	"github.com/tinylib/spin"
 	"io"
-	"sync/atomic"
 )
 
 // this file is just defines a thread-safe
@@ -45,15 +45,14 @@ type waitStack struct {
 }
 
 func (s *connStack) pop(w io.Writer) (ptr *connWrapper) {
-	for !atomic.CompareAndSwapUint32(&s.lock, 0, 1) {
-	}
+	spin.Lock(&s.lock)
 	if s.top != nil {
 		ptr, s.top = s.top, s.top.next
-		atomic.StoreUint32(&s.lock, 0)
+		spin.Unlock(&s.lock)
 		ptr.conn = w
 		return
 	}
-	atomic.StoreUint32(&s.lock, 0)
+	spin.Unlock(&s.lock)
 	ptr = &connWrapper{
 		conn: w,
 	}
@@ -66,23 +65,21 @@ func (s *connStack) push(ptr *connWrapper) {
 	if ptr.next == ptr {
 		return
 	}
-	for !atomic.CompareAndSwapUint32(&s.lock, 0, 1) {
-	}
+	spin.Lock(&s.lock)
 	s.top, ptr.next = ptr, s.top
-	atomic.StoreUint32(&s.lock, 0)
+	spin.Unlock(&s.lock)
 	return
 }
 
 func (s *waitStack) pop(c *Client) (ptr *waiter) {
-	for !atomic.CompareAndSwapUint32(&s.lock, 0, 1) {
-	}
+	spin.Lock(&s.lock)
 	if s.top != nil {
 		ptr, s.top = s.top, s.top.next
-		atomic.StoreUint32(&s.lock, 0)
+		spin.Unlock(&s.lock)
 		ptr.parent = c
 		return ptr
 	}
-	atomic.StoreUint32(&s.lock, 0)
+	spin.Unlock(&s.lock)
 	ptr = &waiter{
 		parent: c,
 	}
@@ -97,9 +94,8 @@ func (s *waitStack) push(ptr *waiter) {
 	if ptr.next == ptr {
 		return
 	}
-	for !atomic.CompareAndSwapUint32(&s.lock, 0, 1) {
-	}
+	spin.Lock(&s.lock)
 	s.top, ptr.next = ptr, s.top
-	atomic.StoreUint32(&s.lock, 0)
+	spin.Unlock(&s.lock)
 	return
 }

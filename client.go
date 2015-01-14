@@ -1,7 +1,6 @@
 package synapse
 
 import (
-	//"bytes"
 	"crypto/tls"
 	"errors"
 	"fmt"

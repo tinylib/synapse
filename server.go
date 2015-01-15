@@ -158,8 +158,8 @@ func (c *connHandler) writeLoop() {
 		wrappers.push(cw)
 	more:
 		select {
-		case another := <-c.writing:
-			if another != nil {
+		case another, ok := <-c.writing:
+			if ok {
 				_, err = bwr.Write(another.res.out)
 				wrappers.push(another)
 				if err != nil {

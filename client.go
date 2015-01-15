@@ -277,15 +277,15 @@ func (c *Client) writeLoop() {
 		// with other writes
 	more:
 		select {
-		case another := <-c.writing:
-			if another != nil {
+		case another, ok := <-c.writing:
+			if ok {
 				_, err = bwr.Write(another.in)
 				if err != nil {
 					c.neterr(err)
 					return
 				}
+				goto more
 			}
-			goto more
 		default:
 		}
 		err = bwr.Flush()
@@ -297,7 +297,7 @@ func (c *Client) writeLoop() {
 }
 
 func (c *Client) neterr(err error) {
-	if !(atomic.LoadUint32(&c.cflag) == 0) {
+	if atomic.LoadUint32(&c.cflag) != 0 {
 		log.Println("synapse client: fatal:", err)
 		c.Close()
 	}

@@ -159,13 +159,15 @@ func (c *connHandler) writeLoop() {
 	more:
 		select {
 		case another := <-c.writing:
-			_, err = bwr.Write(another.res.out)
-			wrappers.push(another)
-			if err != nil {
-				c.logfatal(err)
-				return
+			if another != nil {
+				_, err = bwr.Write(another.res.out)
+				wrappers.push(another)
+				if err != nil {
+					c.logfatal(err)
+					return
+				}
+				goto more
 			}
-			goto more
 		default:
 		}
 		err = bwr.Flush()
@@ -178,7 +180,7 @@ func (c *connHandler) writeLoop() {
 
 func (c *connHandler) logfatal(err error) {
 	if err != io.EOF && err != io.ErrUnexpectedEOF && !strings.Contains(err.Error(), "closed") {
-		log.Printf("synapse server: closing connection (error): %s", err)
+		log.Printf("synapse server: closing connection (%s): %s", c.conn.RemoteAddr(), err)
 		c.conn.Close()
 	}
 }

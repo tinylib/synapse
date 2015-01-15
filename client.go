@@ -80,6 +80,7 @@ func NewClient(c net.Conn, timeout int64) (*Client, error) {
 		conn:    c,
 		pending: make(map[uint64]*waiter),
 		writing: make(chan *waiter, 32),
+		done:    make(chan struct{}),
 	}
 	go cl.readLoop()
 	go cl.writeLoop()
@@ -111,6 +112,7 @@ type Client struct {
 	pending map[uint64]*waiter // map seq number to waiting handler
 	writing chan *waiter       // queue to write to conn
 	cflag   uint32             // client state; 1 is open; 0 is closed
+	done    chan struct{}      // for shutting down timeout loop, etc.
 }
 
 // used to transfer control
@@ -120,26 +122,20 @@ type waiter struct {
 	parent *Client    // parent *client
 	done   sync.Mutex // for notifying response; locked is default
 	err    error      // response error on wakeup, if applicable
-	etime  int64      // enqueue time, for timeout
 	in     []byte     // response body
+	reap   bool       // can reap for timeout (see: (*client).timeoutLoop())
 }
 
+// you must hold c.mlock to call forceClose
 func (c *Client) forceClose() error {
 	err := c.conn.Close()
-	if err != nil {
-		return err
-	}
-
-	close(c.writing)
-
-	// flush all waiters
-	c.mlock.Lock()
 	for _, val := range c.pending {
 		val.err = ErrClosed
 		val.done.Unlock()
 	}
+	close(c.done)
 	c.mlock.Unlock()
-	return nil
+	return err
 }
 
 // Close idempotently closes the
@@ -152,21 +148,20 @@ func (c *Client) Close() error {
 	if !atomic.CompareAndSwapUint32(&c.cflag, 1, 0) {
 		return ErrClosed
 	}
-
 	// if we don't have receivers
 	// pending; then we're safe
 	// to close immediately
 	c.mlock.Lock()
-	pending := len(c.pending)
-	c.mlock.Unlock()
-	if pending == 0 {
+	if len(c.pending) == 0 {
 		return c.forceClose()
 	}
+	c.mlock.Unlock()
 
 	// we have pending conns; deadline them
-	c.conn.SetWriteDeadline(time.Now())
+	c.conn.SetWriteDeadline(time.Now().Add(1 * time.Second))
 	c.conn.SetReadDeadline(time.Now().Add(1 * time.Second))
 	time.Sleep(1 * time.Second)
+	c.mlock.Lock()
 	return c.forceClose()
 }
 
@@ -186,7 +181,6 @@ func (c *Client) readLoop() {
 		_, err := bwr.ReadFull(lead[:])
 		if err != nil {
 			if atomic.LoadUint32(&c.cflag) == 0 {
-				// we received a FIN flag or
 				// we intended to close
 				return
 			}
@@ -196,7 +190,7 @@ func (c *Client) readLoop() {
 			if err != io.EOF && err != io.ErrUnexpectedEOF && !strings.Contains(err.Error(), "closed") {
 				log.Printf("synapse client: fatal: %s", err)
 			}
-			break
+			return
 		}
 
 		seq, frame, sz = readFrame(lead)
@@ -309,25 +303,27 @@ func (c *Client) neterr(err error) {
 	}
 }
 
-// once every 'msec' milliseconds, check
-// that no waiter has been waiting for longer
-// than 'msec'. if so, dequeue it with an error
+// once every 'msec' milliseconds, reap
+// every pending item with reap=true, and
+// set all others to reap=true.
 func (c *Client) timeoutLoop(msec int64) {
 	for {
-		time.Sleep(time.Millisecond * time.Duration(msec))
-		if atomic.LoadUint32(&c.cflag) == 0 {
+		select {
+		case <-c.done:
 			return
-		}
-		now := time.Now().Unix()
-		c.mlock.Lock()
-		for seq, w := range c.pending {
-			if now-w.etime > msec {
-				delete(c.pending, seq)
-				w.err = ErrTimeout
-				w.done.Unlock()
+		case <-time.After(time.Millisecond * time.Duration(msec)):
+			c.mlock.Lock()
+			for seq, w := range c.pending {
+				if w.reap {
+					delete(c.pending, seq)
+					w.err = ErrTimeout
+					w.done.Unlock()
+				} else {
+					w.reap = true
+				}
 			}
+			c.mlock.Unlock()
 		}
-		c.mlock.Unlock()
 	}
 }
 
@@ -344,6 +340,7 @@ func (w *waiter) writeCommand(cmd command, msg []byte) error {
 
 	// get in pending list
 	seqn := atomic.AddUint64(&w.parent.csn, 1)
+	w.reap = false
 	w.parent.mlock.Lock()
 	w.parent.pending[seqn] = w
 	w.parent.mlock.Unlock()
@@ -359,7 +356,6 @@ func (w *waiter) writeCommand(cmd command, msg []byte) error {
 	w.in[leadSize] = byte(cmd)
 	copy(w.in[leadSize+1:], msg)
 
-	w.etime = time.Now().Unix()
 	w.parent.writing <- w
 	return nil
 }
@@ -374,17 +370,15 @@ func (w *waiter) write(method string, in msgp.Marshaler) error {
 	// get sequence number
 	sn := atomic.AddUint64(&w.parent.csn, 1)
 
-	// record enqueue time
-	w.etime = time.Now().Unix()
-
 	// enqueue
+	w.reap = false
 	w.parent.mlock.Lock()
 	w.parent.pending[sn] = w
 	w.parent.mlock.Unlock()
 
 	var err error
 
-	// save 12 bytes up front
+	// save bytes up front
 	if cap(w.in) < leadSize {
 		w.in = make([]byte, leadSize, 256)
 	} else {

@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/philhofer/synapse"
+	"github.com/tinylib/synapse"
 	"log"
 )
 

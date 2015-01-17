@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	"github.com/philhofer/synapse"
+	"github.com/tinylib/synapse"
 	"net"
 )
 

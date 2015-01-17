@@ -139,32 +139,42 @@ func TestNop(t *testing.T) {
 	}
 }
 
-func TestTimer(t *testing.T) {
+// this is mostly designed to tickle
+// data races, not to test any functionality
+// in particular.
+func TestRaceForClose(t *testing.T) {
 	l, err := net.Listen("tcp", "localhost:7000")
 	if err != nil {
 		t.Fatal(err)
 	}
-
 	defer func() {
 		l.Close()
 		time.Sleep(1 * time.Millisecond)
 	}()
-
 	go Serve(l, EchoHandler{})
-
 	cl, err := Dial("tcp", "localhost:7000", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
+	in := testData("hello, world")
+	var out testData
 
-	defer cl.Close()
-
-	err = cl.sendCommand(cmdTime, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	t.Logf("1/2 RTT is %dns", cl.rtt)
+	wg := new(sync.WaitGroup)
+	wg.Add(2)
+	go func() {
+		err := cl.Call("any", &in, &out)
+		if err != nil && err != ErrClosed {
+			t.Error("(*Client).Call returned", err)
+		}
+		wg.Done()
+	}()
+	go func() {
+		if err := cl.Close(); err != nil {
+			t.Error("(*Client).Close returned", err)
+		}
+		wg.Done()
+	}()
+	wg.Wait()
 }
 
 // benchmarks the test case above
@@ -232,36 +242,6 @@ func BenchmarkUnixNoop(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			err := cl.Call("any", nil, nil)
-			if err != nil {
-				b.Fatal(err)
-			}
-		}
-	})
-	b.StopTimer()
-}
-
-func BenchmarkPingRoundtrip(b *testing.B) {
-	l, err := net.Listen("unix", "synapse")
-	if err != nil {
-		b.Fatal(err)
-	}
-	defer func() {
-		l.Close()
-		time.Sleep(1 * time.Millisecond)
-	}()
-	go Serve(l, EchoHandler{})
-	cl, err := Dial("unix", "synapse", 1)
-	if err != nil {
-		b.Fatal(err)
-	}
-	defer cl.Close()
-
-	b.ResetTimer()
-	b.ReportAllocs()
-	b.SetParallelism(20)
-	b.RunParallel(func(pb *testing.PB) {
-		for pb.Next() {
-			err := cl.ping()
 			if err != nil {
 				b.Fatal(err)
 			}

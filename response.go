@@ -25,8 +25,9 @@ type ResponseWriter interface {
 
 // ResponseWriter implementation
 type response struct {
-	out   []byte
-	wrote bool
+	out   []byte  // body
+	wrote bool    // written?
+	_     [7]byte // pad
 }
 
 func (r *response) resetLead() {

@@ -1,12 +1,14 @@
 package synapse
 
 import (
+	"bytes"
 	"crypto/tls"
 	"io"
 	"log"
 	"math"
 	"net"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/philhofer/fwd"
@@ -77,7 +79,9 @@ func ListenAndServe(network string, laddr string, h Handler) error {
 func ServeConn(c net.Conn, h Handler) {
 	ch := connHandler{conn: c, h: h, writing: make(chan *connWrapper, 32)}
 	go ch.writeLoop()
-	ch.connLoop()
+	ch.connLoop()     // returns on connection close
+	ch.wg.Wait()      // wait for handlers to return
+	close(ch.writing) // close output queue
 }
 
 type server struct {
@@ -126,7 +130,8 @@ func putFrame(bts []byte, seq uint64, ft fType, sz int) {
 type connHandler struct {
 	h       Handler
 	conn    net.Conn
-	writing chan *connWrapper
+	wg      sync.WaitGroup    // outstanding handlers
+	writing chan *connWrapper // write queue
 }
 
 func (c *connHandler) writeLoop() {
@@ -143,39 +148,62 @@ func (c *connHandler) writeLoop() {
 	// buffered writer until
 	// no more messages are pending,
 	// and then flushes whatever is
-	// left.
+	// left. (*connHandler).writing
+	// is closed when there are no
+	// more pending handlers.
 	for {
 		cw, ok := <-c.writing
 		if !ok {
-			bwr.Flush()
+			// this is the "normal"
+			// exit point for this
+			// goroutine.
 			return
 		}
 		_, err := bwr.Write(cw.res.out)
 		if err != nil {
 			c.logfatal(err)
-			return
+			goto flush
 		}
 		wrappers.push(cw)
 	more:
 		select {
 		case another, ok := <-c.writing:
 			if ok {
-				_, err = bwr.Write(another.res.out)
+				_, err := bwr.Write(another.res.out)
 				wrappers.push(another)
 				if err != nil {
 					c.logfatal(err)
-					return
+					goto flush
 				}
 				goto more
+			} else {
+				bwr.Flush()
+				return
 			}
 		default:
-		}
-		err = bwr.Flush()
-		if err != nil {
-			c.logfatal(err)
-			return
+			err := bwr.Flush()
+			if err != nil {
+				c.logfatal(err)
+				goto flush
+			}
 		}
 	}
+	// we only get here
+	// if we encountered
+	// a write error, at which
+	// point we closed the whole
+	// connection. eventually,
+	// ServeConn() will close
+	// c.writing
+flush:
+	var buf bytes.Buffer
+	for w := range c.writing {
+		buf.Reset()
+		msgp.UnmarshalAsJSON(&buf, w.res.out)
+		log.Printf("synapse: unable to send response to %s for %s :: %s\n", w.req.RemoteAddr(), w.req.name, &buf)
+		wrappers.push(w)
+	}
+
 }
 
 func (c *connHandler) logfatal(err error) {
@@ -229,6 +257,7 @@ func (c *connHandler) connLoop() {
 				c.logfatal(err)
 				return
 			}
+			c.wg.Add(1)
 			go handleCmd(c, seq, cmd, body)
 			continue
 		}
@@ -273,6 +302,7 @@ func (c *connHandler) connLoop() {
 
 		// trigger handler
 		w.seq = seq
+		c.wg.Add(1)
 		go c.handleReq(w, remote)
 	}
 }
@@ -282,9 +312,9 @@ func (c *connHandler) connLoop() {
 type connWrapper struct {
 	next *connWrapper // only used by slab
 	seq  uint64       // sequence number
+	req  request      // (8w)
+	res  response     // (4w)
 	in   []byte       // incoming message
-	req  request
-	res  response
 }
 
 // handleconn sets up the Request and ResponseWriter
@@ -313,6 +343,7 @@ func (c *connHandler) handleReq(cw *connWrapper, remote net.Addr) {
 	putFrame(cw.res.out, cw.seq, fRES, blen)
 
 	c.writing <- cw
+	c.wg.Done()
 }
 
 func handleCmd(c *connHandler, seq uint64, cmd command, body []byte) {
@@ -347,4 +378,5 @@ func handleCmd(c *connHandler, seq uint64, cmd command, body []byte) {
 		copy(wr.res.out[leadSize+1:], res)
 	}
 	c.writing <- wr
+	c.wg.Done()
 }

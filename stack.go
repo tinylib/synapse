@@ -2,7 +2,6 @@ package synapse
 
 import (
 	"github.com/tinylib/spin"
-	"io"
 )
 
 // this file is just defines a thread-safe
@@ -44,24 +43,20 @@ type waitStack struct {
 	lock uint32
 }
 
-func (s *connStack) pop(w io.Writer) (ptr *connWrapper) {
+func (s *connStack) pop() (ptr *connWrapper) {
 	spin.Lock(&s.lock)
 	if s.top != nil {
 		ptr, s.top = s.top, s.top.next
 		spin.Unlock(&s.lock)
-		ptr.conn = w
 		return
 	}
 	spin.Unlock(&s.lock)
-	ptr = &connWrapper{
-		conn: w,
-	}
+	ptr = &connWrapper{}
 	ptr.next = ptr
 	return
 }
 
 func (s *connStack) push(ptr *connWrapper) {
-	ptr.conn = nil
 	if ptr.next == ptr {
 		return
 	}

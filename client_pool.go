@@ -220,8 +220,9 @@ func (c *ClusterClient) Close() error {
 			wg.Done()
 		}(wg, v)
 	}
-	c.clients = c.clients[0:]
+	c.clients = c.clients[:0]
 	c.cllock.Unlock()
+	wg.Wait()
 	return nil
 }
 

@@ -7,7 +7,9 @@ import (
 	"log"
 	"math"
 	"net"
+	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/philhofer/fwd"
@@ -21,6 +23,8 @@ const (
 	// maxMessageSize is the maximum size of a message
 	maxMessageSize = math.MaxUint16
 )
+
+var serverLog = log.New(os.Stderr, "synapse-server ", log.LstdFlags)
 
 // All writes (on either side) need to be atomic; conn.Write() is called exactly once and
 // should contain the entirety of the request (client-side) or response (server-side).
@@ -76,8 +80,11 @@ func ListenAndServe(network string, laddr string, h Handler) error {
 // connection. It blocks until the connection
 // is closed.
 func ServeConn(c net.Conn, h Handler) {
-	ch := connHandler{conn: c, h: h}
-	ch.connLoop()
+	ch := connHandler{conn: c, h: h, writing: make(chan *connWrapper, 32)}
+	go ch.writeLoop()
+	ch.connLoop()     // returns on connection close
+	ch.wg.Wait()      // wait for handlers to return
+	close(ch.writing) // close output queue
 }
 
 type server struct {
@@ -124,8 +131,89 @@ func putFrame(bts []byte, seq uint64, ft fType, sz int) {
 // connections and multiplexes requests
 // to connWrappers
 type connHandler struct {
-	h    Handler
-	conn net.Conn
+	h       Handler
+	conn    net.Conn
+	wg      sync.WaitGroup    // outstanding handlers
+	writing chan *connWrapper // write queue
+}
+
+func (c *connHandler) writeLoop() {
+	bwr := fwd.NewWriterSize(c.conn, 4096)
+
+	// this works the same way
+	// as (*client).writeLoop()
+	//
+	// the goroutine wakes up when
+	// there are pending messages
+	// to write. it writes the first
+	// one into the buffered writer,
+	// and continues to fill the
+	// buffered writer until
+	// no more messages are pending,
+	// and then flushes whatever is
+	// left. (*connHandler).writing
+	// is closed when there are no
+	// more pending handlers.
+	for {
+		cw, ok := <-c.writing
+		if !ok {
+			// this is the "normal"
+			// exit point for this
+			// goroutine.
+			return
+		}
+		_, err := bwr.Write(cw.res.out)
+		if err != nil {
+			c.logfatal(err)
+			goto flush
+		}
+		wrappers.push(cw)
+	more:
+		select {
+		case another, ok := <-c.writing:
+			if ok {
+				_, err := bwr.Write(another.res.out)
+				wrappers.push(another)
+				if err != nil {
+					c.logfatal(err)
+					goto flush
+				}
+				goto more
+			} else {
+				bwr.Flush()
+				return
+			}
+		default:
+			err := bwr.Flush()
+			if err != nil {
+				c.logfatal(err)
+				goto flush
+			}
+		}
+	}
+	// we only get here
+	// if we encountered
+	// a write error, at which
+	// point we closed the whole
+	// connection. eventually,
+	// ServeConn() will close
+	// c.writing
+flush:
+	var buf bytes.Buffer
+	for w := range c.writing {
+		buf.Reset()
+		msgp.UnmarshalAsJSON(&buf, w.res.out)
+		serverLog.Printf("unable to send response to %s for %s :: %s\n", w.req.RemoteAddr(), w.req.name, &buf)
+		wrappers.push(w)
+	}
+
+}
+
+func (c *connHandler) logfatal(err error) {
+	if err != io.EOF && err != io.ErrUnexpectedEOF && !strings.Contains(err.Error(), "closed") {
+		serverLog.Printf("closing connection (%s): %s", c.conn.RemoteAddr(), err)
+		c.conn.Close()
+	}
 }
 
 // connLoop continuously polls the connection.
@@ -146,11 +234,7 @@ func (c *connHandler) connLoop() {
 
 		_, err := brd.ReadFull(lead[:])
 		if err != nil {
-			if err != io.EOF && err != io.ErrUnexpectedEOF && !strings.Contains(err.Error(), "closed") {
-				log.Printf("server: closing connection (error): %s", err)
-				c.conn.Close()
-				break
-			}
+			c.logfatal(err)
 			return
 		}
 		seq, frame, sz = readFrame(lead)
@@ -173,11 +257,11 @@ func (c *connHandler) connLoop() {
 				body = body[1:]
 			}
 			if err != nil {
-				log.Printf("synapse server: closing connection (error): %s", err)
-				c.conn.Close()
+				c.logfatal(err)
 				return
 			}
-			go handleCmd(c.conn, seq, cmd, body)
+			c.wg.Add(1)
+			go handleCmd(c, seq, cmd, body)
 			continue
 		}
 
@@ -186,14 +270,13 @@ func (c *connHandler) connLoop() {
 		if frame != fREQ {
 			_, err := brd.Skip(sz)
 			if err != nil {
-				log.Printf("synapse server: closing connection (error): %s", err)
-				c.conn.Close()
+				c.logfatal(err)
 				return
 			}
 			continue
 		}
 
-		w := wrappers.pop(c.conn)
+		w := wrappers.pop()
 
 		if cap(w.in) >= sz {
 			w.in = w.in[0:sz]
@@ -212,19 +295,18 @@ func (c *connHandler) connLoop() {
 		}
 		_, err = brd.ReadFull(w.in)
 		if err != nil {
-			log.Printf("synapse server: closing connection (error): %s", err)
-			c.conn.Close()
-			break
+			c.logfatal(err)
+			return
 		}
 		// clear read deadline
 		if deadline {
 			c.conn.SetReadDeadline(time.Time{})
-
 		}
 
 		// trigger handler
 		w.seq = seq
-		go handleReq(w, remote, c.h)
+		c.wg.Add(1)
+		go c.handleReq(w, remote)
 	}
 }
 
@@ -233,27 +315,28 @@ func (c *connHandler) connLoop() {
 type connWrapper struct {
 	next *connWrapper // only used by slab
 	seq  uint64       // sequence number
+	req  request      // (8w)
+	res  response     // (4w)
 	in   []byte       // incoming message
-	req  request
-	res  response
-	conn io.Writer
 }
 
 // handleconn sets up the Request and ResponseWriter
 // interfaces and calls the handler.
-// output is written to cw.parent.conn
-func handleReq(cw *connWrapper, remote net.Addr, h Handler) {
+func (c *connHandler) handleReq(cw *connWrapper, remote net.Addr) {
 	// clear/reset everything
 	cw.req.addr = remote
 	cw.res.wrote = false
 
 	var err error
+
+	// split request into 'name' and body
 	cw.req.name, cw.req.in, err = msgp.ReadStringBytes(cw.in)
 	if err != nil {
 		cw.res.Error(BadRequest)
 	} else {
-		h.ServeCall(&cw.req, &cw.res)
-		// if the handler didn't write a body
+		c.h.ServeCall(&cw.req, &cw.res)
+		// if the handler didn't write a body,
+		// write 'nil'
 		if !cw.res.wrote {
 			cw.res.Send(nil)
 		}
@@ -262,49 +345,41 @@ func handleReq(cw *connWrapper, remote net.Addr, h Handler) {
 	blen := len(cw.res.out) - leadSize // length minus frame length
 	putFrame(cw.res.out, cw.seq, fRES, blen)
 
-	_, err = cw.conn.Write(cw.res.out)
-	if err != nil {
-		// TODO: print something more usefull...?
-		log.Printf("synapse server: error writing response: %s", err)
-	}
-	wrappers.push(cw)
+	c.writing <- cw
+	c.wg.Done()
 }
 
-func handleCmd(w io.WriteCloser, seq uint64, cmd command, body []byte) {
-	var (
-		buf  bytes.Buffer
-		lead [leadSize + 1]byte // one extra, b/c we always write cmd
-		res  []byte
-	)
-
-	lead[leadSize] = byte(cmd)
-
+func handleCmd(c *connHandler, seq uint64, cmd command, body []byte) {
 	act := cmdDirectory[cmd]
+	resbyte := byte(cmd)
+	var res []byte
 	var err error
 	if act == nil {
-		lead[leadSize] = byte(cmdInvalid)
+		resbyte = byte(cmdInvalid)
 	} else {
-		res, err = act.Server(w, body)
+		res, err = act.Server(c.conn, body)
 		if err != nil {
-			lead[leadSize] = byte(cmdInvalid)
+			resbyte = byte(cmdInvalid)
 		}
 	}
 
+	// for now, we'll use one of the
+	// connection wrappers
+	wr := wrappers.pop()
+
 	sz := len(res) + 1
-	putFrame(lead[:], seq, fCMD, sz)
-
-	var bts []byte
-
-	if sz == 1 {
-		bts = lead[:]
+	need := sz + leadSize
+	if cap(wr.res.out) < need {
+		wr.res.out = make([]byte, need)
 	} else {
-		buf.Write(lead[:])
-		buf.Write(res)
-		bts = buf.Bytes()
+		wr.res.out = wr.res.out[:need]
 	}
 
-	_, err = w.Write(bts)
-	if err != nil {
-		log.Printf("synapse server: error: %s", err)
+	putFrame(wr.res.out[:], seq, fCMD, sz)
+	wr.res.out[leadSize] = resbyte
+	if res != nil {
+		copy(wr.res.out[leadSize+1:], res)
 	}
+	c.writing <- wr
+	c.wg.Done()
 }

@@ -29,8 +29,8 @@ type Request interface {
 // Request implementation passed
 // to the root handler of the server.
 type request struct {
-	name string   // method name
 	addr net.Addr // remote address
+	name string   // method name
 	in   []byte   // body
 	_    [8]byte  // pad
 }

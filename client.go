@@ -253,7 +253,7 @@ func (c *Client) readLoop() {
 		// fill the waiters input
 		// buffer and then notify
 		if cap(w.in) >= sz {
-			w.in = w.in[0:sz]
+			w.in = w.in[:sz]
 		} else {
 			w.in = make([]byte, sz)
 		}
@@ -520,8 +520,7 @@ func (c *Client) sendCommand(cmd command, msg []byte) error {
 // returns an error if the server
 // didn't respond appropriately
 func (c *Client) ping() error {
-	body, _ := time.Now().MarshalBinary()
-	return c.sendCommand(cmdPing, body)
+	return c.sendCommand(cmdPing, nil)
 }
 
 // AsyncResponse.Read implementation

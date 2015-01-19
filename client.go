@@ -1,14 +1,10 @@
 package synapse
 
 import (
-	"bytes"
 	"crypto/tls"
 	"errors"
 	"fmt"
-	"io"
-	"log"
 	"net"
-	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -38,7 +34,7 @@ const (
 
 var (
 	// ErrClosed is returns when a call is attempted
-	// on a closed client
+	// on a closed client.
 	ErrClosed = errors.New("synapse: client is closed")
 
 	// ErrTimeout is returned when a server
@@ -52,11 +48,8 @@ var (
 	ErrTooLarge = errors.New("synapse: message body too large")
 )
 
-// logger for output, if one isn't specified by the user
-var stdLogger = log.New(os.Stderr, "synapse-client ", log.LstdFlags)
-
 // AsyncResponse is returned by
-// calls to client.Async
+// calls to (*Client).Async
 type AsyncResponse interface {
 	// Read reads the response to the
 	// request into the object, returning
@@ -71,8 +64,8 @@ type AsyncResponse interface {
 // the provided network and remote address.
 // The provided timeout is used as the timeout
 // for requests, in milliseconds.
-func Dial(network string, laddr string, timeout int64) (*Client, error) {
-	conn, err := net.Dial(network, laddr)
+func Dial(network string, raddr string, timeout int64) (*Client, error) {
+	conn, err := net.Dial(network, raddr)
 	if err != nil {
 		return nil, err
 	}
@@ -81,8 +74,8 @@ func Dial(network string, laddr string, timeout int64) (*Client, error) {
 
 // DialTLS acts identically to Dial, except that it dials the connection
 // over TLS using the provided *tls.Config.
-func DialTLS(network, laddr string, timeout int64, config *tls.Config) (*Client, error) {
-	conn, err := tls.Dial(network, laddr, config)
+func DialTLS(network, raddr string, timeout int64, config *tls.Config) (*Client, error) {
+	conn, err := tls.Dial(network, raddr, config)
 	if err != nil {
 		return nil, err
 	}
@@ -92,11 +85,12 @@ func DialTLS(network, laddr string, timeout int64, config *tls.Config) (*Client,
 // NewClient creates a new client from an
 // existing net.Conn. Timeout is the maximum time,
 // in milliseconds, to wait for server responses
-// before sending an error to the caller.
+// before sending an error to the caller. NewClient
+// fails with an error if it cannot ping the server
+// over the connection.
 func NewClient(c net.Conn, timeout int64) (*Client, error) {
 	cl := &Client{
 		conn:    c,
-		logger:  stdLogger,
 		pending: make(map[uint64]*waiter, waiterHWM),
 		writing: make(chan *waiter, waiterHWM),
 		done:    make(chan struct{}),
@@ -116,15 +110,10 @@ func NewClient(c net.Conn, timeout int64) (*Client, error) {
 	err := cl.ping()
 	if err != nil {
 		cl.Close()
-		return nil, fmt.Errorf("synapse client: attempt to ping the server failed: %s", err)
+		return nil, fmt.Errorf("synapse: ping failed: %s", err)
 	}
 
 	return cl, nil
-}
-
-// LogTo sets the output writer of the client logger.
-func (c *Client) LogTo(w io.Writer) {
-	c.logger = log.New(w, "synapse-client ", log.LstdFlags)
 }
 
 // Client is a client to
@@ -132,7 +121,6 @@ func (c *Client) LogTo(w io.Writer) {
 type Client struct {
 	conn    net.Conn           // connection
 	csn     uint64             // sequence number; atomic
-	logger  *log.Logger        // for logging
 	mlock   sync.Mutex         // to protect 'mlock' and 'state'
 	pending map[uint64]*waiter // map seq number to waiting handler
 	writing chan *waiter       // queue to write to conn; size is effectively HWM
@@ -180,6 +168,39 @@ func (c *Client) Close() error {
 	return c.conn.Close()
 }
 
+// close with error
+// sets the status of every waiting
+// goroutine to 'err' and unblocks it
+func (c *Client) closeError(err error) {
+	err = fmt.Errorf("synapse: fatal error: %s", err)
+
+	c.mlock.Lock()
+	if c.state == closedState {
+		c.mlock.Unlock()
+		return
+	}
+	c.state = closedState
+	for _, val := range c.pending {
+		val.err = err
+		val.done.Unlock()
+	}
+	c.mlock.Unlock()
+	close(c.done)
+	close(c.writing)
+	c.conn.Close()
+}
+
+// a handler for io.Read() and io.Write(),
+// e.g.
+//  if !c.do(w.Write(data)) { goto fail }
+func (c *Client) do(_ int, err error) bool {
+	if err != nil {
+		c.closeError(err)
+		return false
+	}
+	return true
+}
+
 // readLoop continuously polls
 // the connection for server
 // responses. responses are then
@@ -194,9 +215,7 @@ func (c *Client) readLoop() {
 	bwr := fwd.NewReaderSize(c.conn, 4096)
 
 	for {
-		_, err := bwr.ReadFull(lead[:])
-		if err != nil {
-			c.neterr(err)
+		if !c.do(bwr.ReadFull(lead[:])) {
 			return
 		}
 
@@ -207,9 +226,7 @@ func (c *Client) readLoop() {
 		// precisely the same way
 		if frame != fCMD && frame != fRES {
 			// ignore
-			_, err := bwr.Skip(sz)
-			if err != nil {
-				c.neterr(err)
+			if !c.do(bwr.Skip(sz)) {
 				return
 			}
 			continue
@@ -227,43 +244,28 @@ func (c *Client) readLoop() {
 		c.mlock.Unlock()
 
 		if !ok {
-			// discard response...
-			c.logger.Printf("synapse client: discarding response #%d; no pending waiter", seq)
-			bwr.Skip(sz)
+			if !c.do(bwr.Skip(sz)) {
+				return
+			}
 			continue
 		}
 
 		// fill the waiters input
 		// buffer and then notify
 		if cap(w.in) >= sz {
-			w.in = w.in[0:sz]
+			w.in = w.in[:sz]
 		} else {
 			w.in = make([]byte, sz)
 		}
 
-		// don't block forever on reading the request body -
-		// if we haven't already buffered the body, we set
-		// a deadline for the next read
-		deadline := false
-		if bwr.Buffered() < sz {
-			deadline = true
-			c.conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
-		}
-		_, err = bwr.ReadFull(w.in)
-		if err != nil {
-			// TODO: better info here
-			// we still need to send on w.done
-			c.logger.Printf("synapse client: error on read: %s", err)
-		}
-		if deadline {
-			// clear deadline
-			c.conn.SetReadDeadline(time.Time{})
+		if !c.do(bwr.ReadFull(w.in)) {
+			return
 		}
 
 		// wakeup waiter w/
 		// error from last
 		// read call (usually nil)
-		w.err = err
+		w.err = nil
 		w.done.Unlock()
 	}
 }
@@ -288,10 +290,8 @@ func (c *Client) writeLoop() {
 			return
 		}
 		// write it
-		_, err := bwr.Write(wt.in)
-		if err != nil {
-			c.neterr(err)
-			goto flush
+		if !c.do(bwr.Write(wt.in)) {
+			return
 		}
 		// try to match this write
 		// with other writes
@@ -299,9 +299,7 @@ func (c *Client) writeLoop() {
 		select {
 		case another, ok := <-c.writing:
 			if ok {
-				_, err = bwr.Write(another.in)
-				if err != nil {
-					c.neterr(err)
+				if !c.do(bwr.Write(another.in)) {
 					return
 				}
 				goto more
@@ -310,48 +308,27 @@ func (c *Client) writeLoop() {
 				return
 			}
 		default:
-			err = bwr.Flush()
-			if err != nil {
-				c.neterr(err)
-				goto flush
+			if !c.do(0, bwr.Flush()) {
+				return
 			}
 		}
-	}
-flush:
-	// flush remaining writers out
-	// of the channel and log their
-	// bodies and sequence numbers
-	for w := range c.writing {
-		method, body, _ := msgp.ReadStringBytes(w.in[leadSize:])
-		var buf bytes.Buffer
-		msgp.UnmarshalAsJSON(&buf, body)
-		c.logger.Printf("synapse: unable to send request for %q :: %s\n", method, buf)
-	}
-}
-
-func (c *Client) isClosed() bool {
-	c.mlock.Lock()
-	s := c.state
-	c.mlock.Unlock()
-	return s != openState
-}
-
-func (c *Client) neterr(err error) {
-	if !c.isClosed() {
-		c.logger.Println("synapse client: fatal:", err)
-		c.Close()
 	}
 }
 
 // once every 'msec' milliseconds, reap
 // every pending item with reap=true, and
 // set all others to reap=true.
+//
+// NOTE(pmh): this doesn't actually guarantee
+// de-queing after the given duration;
+// rather, it limits max wait time to 2*msec.
 func (c *Client) timeoutLoop(msec int64) {
+	tick := time.Tick(time.Millisecond * time.Duration(msec))
 	for {
 		select {
 		case <-c.done:
 			return
-		case <-time.After(time.Millisecond * time.Duration(msec)):
+		case <-tick:
 			c.mlock.Lock()
 			for seq, w := range c.pending {
 				if w.reap {
@@ -493,10 +470,9 @@ func (w *waiter) call(method string, in msgp.Marshaler, out msgp.Unmarshaler) er
 }
 
 // Call sends a request to the server with 'in' as the body,
-// and then decodes the response into 'out'.
+// and then decodes the response into 'out'. Call is safe
+// to call from multiple goroutines simultaneously.
 func (c *Client) Call(method string, in msgp.Marshaler, out msgp.Unmarshaler) error {
-	// grab a waiter from the heap,
-	// make the call, put it back
 	w := waiters.pop(c)
 	err := w.call(method, in, out)
 	waiters.push(w)
@@ -535,7 +511,7 @@ func (c *Client) sendCommand(cmd command, msg []byte) error {
 		return errors.New("unknown CMD code returned")
 	}
 
-	act.Client(c, c.conn, w.in[1:])
+	act.Client(c, w.in[1:])
 	waiters.push(w)
 	return nil
 }
@@ -562,7 +538,8 @@ func (w *waiter) Read(out msgp.Unmarshaler) error {
 // wait for a response. The returned AsyncResponse object
 // should be used to decode the response. After the first
 // call to Read(), the returned AsyncResponse object becomes
-// invalid.
+// invalid. Async is safe to call from multiple goroutines
+// simultaneously.
 func (c *Client) Async(method string, in msgp.Marshaler) (AsyncResponse, error) {
 	w := waiters.pop(c)
 	err := w.write(method, in)

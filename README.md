@@ -9,13 +9,14 @@ Synapse is designed to make it easy to write network applications that have requ
 like HTTP and (some) RPC protocols. Like `net/rpc`, synapse can operate over most network protocols (or any 
 `net.Conn`), and, like `net/http`, provides a standardized way to write middlewares and routers around services. 
 As an added bonus, synapse has a much smaller per-request and per-connection memory footprint than `net/rpc` or 
-`net/http`, and provides highly scalable transactional throughput.
+`net/http`.
 
 #### Non-goals
 
 Synapse is not intended to be a replacement for industrial-grade message queue solutions like ZeroMQ, RabbitMQ, etc. 
 Rather, synapse provides a convenient way to bind to a network connection without worrying about message framing, 
-multiplexing, serialization, pipelining, and so on.
+multiplexing, serialization, pipelining, and so on. As synapse matures, we may release middlewares and other sorts 
+of plugins for synapse in other repositories, but our intention is to keep the core as simple as possible.
 
 As a motivating example, let's consider a "hello world" program. (You can find the complete files in `_examples/hello_world/`.)
 
@@ -94,24 +95,23 @@ The following protocols are explicitly supported:
  - TLS
  - Unix sockets
 
-Additionally, you can create clients and servers that use anything that satisfies the `net.Conn` interface.
-
-Synapse does request multiplexing behind the scenes, so it generally isn't necessary to use more than one connection between the client and the server.
+Additionally, you can create clients and servers that use anything that satisfies the `net.Conn` interface on 
+both ends.
 
 ## Performance, etc.
 
-Client/server throughput is determined by a number of factors, but some important ones to consider are 
-latency (round-trip time, or RTT), message size, and window size. For instance, TCP has a default window size of 65,535 bytes, which 
-means that your operating system kernel will not send more than that many bytes to the server without an acknowledgement.
-If, for example, your average message size was 655 bytes, you could send up to 100 messages without any 
-acknowledgement, but the 101st message would be blocked waiting on an ACK packet from
-the server, which would take about your average RTT to arrive on your end. UDP transport, on the other hand, 
-has no built-in request-response semantics, and thus no concept of "window size." Thus, in high-latency networks, using 
-packet-oriented protocols like UDP can provide pretty substantial throughput gains, although ultra-high-througput use 
-cases over UDP will cause requests and responses to be destroyed by packet congestion. In any case, it is important to consider 
-the mechanics of your transport mechanism when seeking to optimize transaction througput.
+Synapse is optimized for throughput over latency; in general, synapse is designed to perform well in adverse 
+(high-load/high-concurrency) conditions over simple serial conditions. There are a number of implementation 
+details that influence performance:
 
-With all that being said, it's fairly simple to achieve transaction throughput on the order of hundreds-of-thousands-per-second with
-only a handful of network connections due to the Synapse wire protocol's out-of-order message processing and Go's lightweight 
-concurrency model. (As of this writing, throughput of a trivial server/handler combo over one unix socket comes in at 312,500 requests per second.) Additionally, both client- and server-side code have been deliberately designed to consume minimal per-request 
-and per-connection resources, particularly heap space.
+ - De-coupling of message body serialization/de-serialization from the main read/write loops reduces the 
+ amount of time spend in critical (blocking) sections, meaning that time spent blocking is both lower and 
+ more consistent. Additionally, malformed handlers cannot corrupt the state of the network i/o loop.
+ However, this hurts performance in the simple (serial) case, because lots of time is spent copying memory
+ rather than making forward progress.
+ - Opportunistic coalescing of network writes reduces system call overhead, without dramatically affecting latency.
+ - The objects used to maintain per-request state are arena allocated during initialization. Practically speaking, 
+ this means that, typically, synapse does 0 allocations per request on the client side, and 1 allocation on the 
+ server side (for `request.Name()`).
+ - `tinylib/msgp` serialization is fast, compact, and versatile.
+

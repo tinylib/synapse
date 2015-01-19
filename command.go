@@ -1,10 +1,5 @@
 package synapse
 
-import (
-	"io"
-	"time"
-)
-
 // Commands have request-response
 // semantics similar to the user-level
 // requests and responses. However, commands
@@ -57,13 +52,13 @@ var cmdDirectory = [maxbyte]action{
 type action interface {
 	// Client is the action carried out on the client side
 	// when it receives a command response from a server
-	Client(c *Client, from io.WriteCloser, msg []byte)
+	Client(c *Client, msg []byte)
 
 	// Sever is the action carried out on the server side. It
 	// should return the reponse message (if any), and any
 	// error encountered. Errors will result in cmdInvalid
 	// sent to the client.
-	Server(from io.WriteCloser, msg []byte) (res []byte, err error)
+	Server(ch *connHandler, msg []byte) (res []byte, err error)
 }
 
 // list of commands
@@ -83,16 +78,6 @@ const (
 // ping is a no-op on both sides
 type ping struct{}
 
-func (p ping) Client(cl *Client, _ io.WriteCloser, res []byte) {
-	var tm time.Time
-	err := tm.UnmarshalBinary(res)
-	if err != nil {
-		return
-	}
-	d := time.Since(tm)
-	cl.logger.Printf("PONG from %s took %s", cl.conn.RemoteAddr(), d)
-}
+func (p ping) Client(cl *Client, res []byte) {}
 
-func (p ping) Server(_ io.WriteCloser, _ []byte) ([]byte, error) {
-	return time.Now().MarshalBinary()
-}
+func (p ping) Server(ch *connHandler, body []byte) ([]byte, error) { return nil, nil }

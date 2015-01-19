@@ -113,5 +113,5 @@ the mechanics of your transport mechanism when seeking to optimize transaction t
 
 With all that being said, it's fairly simple to achieve transaction throughput on the order of hundreds-of-thousands-per-second with
 only a handful of network connections due to the Synapse wire protocol's out-of-order message processing and Go's lightweight 
-concurrency model. (As of this writing, throughput of a trivial server/handler combo over one unix socket comes in at 312,500 requests per second.) Additionally, both client- and server-side code have been deliberately designed to consume minimal per-request 
+concurrency model. (As of this writing, throughput of a trivial server/handler combo over one unix socket comes in at 900,000 requests per second.) Additionally, both client- and server-side code have been deliberately designed to consume minimal per-request 
 and per-connection resources, particularly heap space.

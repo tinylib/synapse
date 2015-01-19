@@ -1,16 +1,10 @@
 package synapse
 
 import (
-	"bytes"
 	"crypto/tls"
-	"io"
-	"log"
 	"math"
 	"net"
-	"os"
-	"strings"
 	"sync"
-	"time"
 
 	"github.com/philhofer/fwd"
 	"github.com/tinylib/msgp/msgp"
@@ -24,15 +18,13 @@ const (
 	maxMessageSize = math.MaxUint16
 )
 
-var serverLog = log.New(os.Stderr, "synapse-server ", log.LstdFlags)
-
 // All writes (on either side) need to be atomic; conn.Write() is called exactly once and
-// should contain the entirety of the request (client-side) or response (server-side).
+// should contain the entirety of the request (client-side) or response (Server-side).
 //
 // In principle, the client can operate on any net.Conn, and the
-// server can operate on any net.Listener.
+// Server can operate on any net.Listener.
 
-// Serve starts a server on 'l' that serves
+// Serve starts a Server on 'l' that serves
 // the supplied handler. It blocks until the
 // listener closes.
 func Serve(l net.Listener, h Handler) error {
@@ -43,7 +35,7 @@ func Serve(l net.Listener, h Handler) error {
 // ListenAndServeTLS acts identically to ListenAndServe, except that
 // it expects connections over TLS1.2 (see crypto/tls). Additionally,
 // files containing a certificate and matching private key for the
-// server must be provided. If the certificate is signed by a
+// Server must be provided. If the certificate is signed by a
 // certificate authority, the certFile should be the concatenation of
 // the server's certificate followed by the CA's certificate.
 func ListenAndServeTLS(network, laddr string, certFile, keyFile string, h Handler) error {
@@ -80,7 +72,11 @@ func ListenAndServe(network string, laddr string, h Handler) error {
 // connection. It blocks until the connection
 // is closed.
 func ServeConn(c net.Conn, h Handler) {
-	ch := connHandler{conn: c, h: h, writing: make(chan *connWrapper, 32)}
+	ch := connHandler{
+		conn:    c,
+		h:       h,
+		writing: make(chan *connWrapper, 32),
+	}
 	go ch.writeLoop()
 	ch.connLoop()     // returns on connection close
 	ch.wg.Wait()      // wait for handlers to return
@@ -137,7 +133,7 @@ type connHandler struct {
 	writing chan *connWrapper // write queue
 }
 
-func (c *connHandler) writeLoop() {
+func (c *connHandler) writeLoop() error {
 	bwr := fwd.NewWriterSize(c.conn, 4096)
 
 	// this works the same way
@@ -154,17 +150,18 @@ func (c *connHandler) writeLoop() {
 	// left. (*connHandler).writing
 	// is closed when there are no
 	// more pending handlers.
+	var err error
 	for {
 		cw, ok := <-c.writing
 		if !ok {
 			// this is the "normal"
 			// exit point for this
 			// goroutine.
-			return
+			return nil
 		}
-		_, err := bwr.Write(cw.res.out)
+		_, err = bwr.Write(cw.res.out)
 		if err != nil {
-			c.logfatal(err)
+			c.conn.Close()
 			goto flush
 		}
 		wrappers.push(cw)
@@ -172,54 +169,36 @@ func (c *connHandler) writeLoop() {
 		select {
 		case another, ok := <-c.writing:
 			if ok {
-				_, err := bwr.Write(another.res.out)
+				_, err = bwr.Write(another.res.out)
 				wrappers.push(another)
 				if err != nil {
-					c.logfatal(err)
+					c.conn.Close()
 					goto flush
 				}
 				goto more
 			} else {
 				bwr.Flush()
-				return
+				return nil
 			}
 		default:
-			err := bwr.Flush()
+			err = bwr.Flush()
 			if err != nil {
-				c.logfatal(err)
+				c.conn.Close()
 				goto flush
 			}
 		}
 	}
-	// we only get here
-	// if we encountered
-	// a write error, at which
-	// point we closed the whole
-	// connection. eventually,
-	// ServeConn() will close
-	// c.writing
 flush:
-	var buf bytes.Buffer
 	for w := range c.writing {
-		buf.Reset()
-		msgp.UnmarshalAsJSON(&buf, w.res.out)
-		serverLog.Printf("unable to send response to %s for %s :: %s\n", w.req.RemoteAddr(), w.req.name, &buf)
 		wrappers.push(w)
 	}
-
-}
-
-func (c *connHandler) logfatal(err error) {
-	if err != io.EOF && err != io.ErrUnexpectedEOF && !strings.Contains(err.Error(), "closed") {
-		serverLog.Printf("closing connection (%s): %s", c.conn.RemoteAddr(), err)
-		c.conn.Close()
-	}
+	return err
 }
 
 // connLoop continuously polls the connection.
 // requests are read synchronously; the responses
 // are written in a spawned goroutine
-func (c *connHandler) connLoop() {
+func (c *connHandler) connLoop() error {
 	brd := fwd.NewReaderSize(c.conn, 4096)
 	remote := c.conn.RemoteAddr()
 
@@ -234,8 +213,8 @@ func (c *connHandler) connLoop() {
 
 		_, err := brd.ReadFull(lead[:])
 		if err != nil {
-			c.logfatal(err)
-			return
+			c.conn.Close()
+			return err
 		}
 		seq, frame, sz = readFrame(lead)
 
@@ -257,8 +236,8 @@ func (c *connHandler) connLoop() {
 				body = body[1:]
 			}
 			if err != nil {
-				c.logfatal(err)
-				return
+				c.conn.Close()
+				return err
 			}
 			c.wg.Add(1)
 			go handleCmd(c, seq, cmd, body)
@@ -268,10 +247,10 @@ func (c *connHandler) connLoop() {
 		// the only valid frame
 		// type left is fREQ
 		if frame != fREQ {
-			_, err := brd.Skip(sz)
+			_, err = brd.Skip(sz)
 			if err != nil {
-				c.logfatal(err)
-				return
+				c.conn.Close()
+				return err
 			}
 			continue
 		}
@@ -284,23 +263,10 @@ func (c *connHandler) connLoop() {
 			w.in = make([]byte, sz)
 		}
 
-		// don't block forever here,
-		// deadline if we haven't already
-		// buffered the connection data
-		deadline := false
-		if brd.Buffered() < sz {
-			deadline = true
-			c.conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
-
-		}
 		_, err = brd.ReadFull(w.in)
 		if err != nil {
-			c.logfatal(err)
-			return
-		}
-		// clear read deadline
-		if deadline {
-			c.conn.SetReadDeadline(time.Time{})
+			c.conn.Close()
+			return err
 		}
 
 		// trigger handler
@@ -357,7 +323,7 @@ func handleCmd(c *connHandler, seq uint64, cmd command, body []byte) {
 	if act == nil {
 		resbyte = byte(cmdInvalid)
 	} else {
-		res, err = act.Server(c.conn, body)
+		res, err = act.Server(c, body)
 		if err != nil {
 			resbyte = byte(cmdInvalid)
 		}

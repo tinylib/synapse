@@ -10,6 +10,17 @@ import (
 // stack to use as a free-list for *connWrapper
 // and *waiter structures, since they are allocated
 // and de-allocated frequently and predictably.
+//
+// we statically allocate 'arenaSize' waiters
+// and connWrappers in contiguous blocks, and
+// then create a LIFO out of them during
+// initialization. if we run out of elements
+// in the stack, we fall back to using the
+// heap, and we set the 'next' pointer
+// in the returned element to itself.
+// push() operations check for 'next==self'
+// and no-op in that case, since we don't
+// want the stack to grow forever without bound.
 
 const arenaSize = 512
 
@@ -17,7 +28,6 @@ var (
 	waiters  waitStack
 	wrappers connStack
 
-	// stack elements are persistentalloc'd
 	waiterSlab  [arenaSize]waiter
 	wrapperSlab [arenaSize]connWrapper
 )
@@ -77,9 +87,8 @@ func (s *waitStack) pop(c *Client) (ptr *waiter) {
 		return ptr
 	}
 	spin.Unlock(&s.lock)
-	ptr = &waiter{
-		parent: c,
-	}
+	ptr = &waiter{}
+	ptr.parent = c
 	ptr.next = ptr
 	ptr.done.Lock()
 	return

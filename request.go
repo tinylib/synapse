@@ -10,11 +10,11 @@ import (
 // requests.
 type Request interface {
 	// Name returns the name of
-	// the requested method
+	// the requested method.
 	Name() string
 
-	// RemoteAddr returns the address
-	// that the request originated from
+	// RemoteAddr returns the remote
+	// address that made the request.
 	RemoteAddr() net.Addr
 
 	// Decode reads the data of the request
@@ -22,7 +22,7 @@ type Request interface {
 	Decode(msgp.Unmarshaler) error
 
 	// IsNil returns whether or not
-	// the body of the request is 'nil'
+	// the body of the request is 'nil'.
 	IsNil() bool
 }
 
@@ -32,16 +32,14 @@ type request struct {
 	addr net.Addr // remote address
 	name string   // method name
 	in   []byte   // body
-	_    [8]byte  // pad
 }
 
 func (r *request) Name() string         { return r.name }
 func (r *request) RemoteAddr() net.Addr { return r.addr }
 
 func (r *request) Decode(m msgp.Unmarshaler) error {
-	var err error
 	if m != nil {
-		r.in, err = m.UnmarshalMsg(r.in)
+		_, err := m.UnmarshalMsg(r.in)
 		return err
 	}
 	return nil

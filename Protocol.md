@@ -1,15 +1,14 @@
 Synapse Wire Protocol
 =====================
 
-Synapse uses a simple framing protocol in order to allow requests and
-responses to be handled without blocking the connection. The bodies of most
-messages are formatted using the [MessagePack](http://msgpack.org) serialization
-protocol.
+Synapse uses a simple framing protocol to transmit data. This document describes 
+the fundamental structure of the protocol, although certain details have yet to be 
+formalized.
 
 ## Lead Frame
 
 Every message on the wire begins with a "lead frame," which is formatted 
-as follows.
+as follows:
 	
 	+-----------------+------------+----------------+==========+
 	| Sequence Number | Frame Type | Message Length |   DATA   |
@@ -29,7 +28,6 @@ The frame types are defined as follows:
 
 | Value | Type |
 |:-----:|:----:|
-| 0 | Invalid |
 | 1 | Request |
 | 2 | Response |
 | 3 | Command |

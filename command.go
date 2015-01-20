@@ -36,13 +36,11 @@ const (
 // that allows either end
 // to communicate information
 // to the other
-type command byte
-
-const maxbyte = 256
+type command uint8
 
 // cmdDirectory is a map of all the commands
 // to their respective actions
-var cmdDirectory = [maxbyte]action{
+var cmdDirectory = [_maxcommand]action{
 	cmdPing: ping{},
 }
 
@@ -73,6 +71,10 @@ const (
 	// simple ping
 	// command
 	cmdPing
+
+	// a command >= _maxcommand
+	// is invalid
+	_maxcommand
 )
 
 // ping is a no-op on both sides

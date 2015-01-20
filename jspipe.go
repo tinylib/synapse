@@ -15,8 +15,7 @@ import (
 // as JSON to stdout by writing
 // something like the following:
 //
-//	res, _ := client.Async("thing", in)
-//	res.Read(synapse.JSPipe(os.Stdout))
+//	client.Call("name", in, synapse.JSPipe(os.Stdout))
 //
 func JSPipe(w io.Writer) msgp.Unmarshaler { return jsp{Writer: w} }
 

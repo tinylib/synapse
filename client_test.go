@@ -11,26 +11,6 @@ import (
 // open up a client and server; make
 // some concurrent requests
 func TestClient(t *testing.T) {
-	l, err := net.Listen("tcp", "localhost:7000")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	defer func() {
-		l.Close()
-		time.Sleep(1 * time.Millisecond)
-	}()
-	mux := NewRouter()
-	mux.Handle("echo", EchoHandler{})
-
-	go Serve(l, mux)
-
-	cl, err := Dial("tcp", "localhost:7000", 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	defer cl.Close()
 
 	const concurrent = 5
 	wg := new(sync.WaitGroup)
@@ -40,10 +20,13 @@ func TestClient(t *testing.T) {
 		go func() {
 			instr := testData("hello, world!")
 			var outstr testData
-			cl.Call("echo", &instr, &outstr)
-			//if !bytes.Equal([]byte(instr), []byte(outstr)) {
-			//	t.Fatal("input and output not equal")
-			//}
+			err := tcpClient.Call("echo", &instr, &outstr)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal([]byte(instr), []byte(outstr)) {
+				t.Fatal("input and output not equal")
+			}
 			wg.Done()
 		}()
 	}
@@ -51,7 +34,7 @@ func TestClient(t *testing.T) {
 	wg.Wait()
 
 	// test for NotFound
-	res, err := cl.Async("doesn't-exist", nil)
+	res, err := tcpClient.Async("doesn't-exist", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,33 +45,32 @@ func TestClient(t *testing.T) {
 	}
 }
 
+// the output of the debug handler
+// is only visible if '-v' is set
+func TestDebugClient(t *testing.T) {
+	attachDebug("debug_echo", t)
+
+	instr := String("here's a message body!")
+	var outstr String
+	err := tcpClient.Call("debug_echo", &instr, &outstr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if instr != outstr {
+		t.Fatal("input and output not equal")
+	}
+}
+
 func TestAsyncClient(t *testing.T) {
-	l, err := net.Listen("tcp", "localhost:7000")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	defer func() {
-		l.Close()
-		time.Sleep(1 * time.Millisecond)
-	}()
-
-	go Serve(l, EchoHandler{})
-
-	cl, err := Dial("tcp", "localhost:7000", 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	defer cl.Close()
 
 	// make 5 requests, then
 	// read 5 responses
 	const concurrent = 5
-	hlrs := make([]AsyncResponse, concurrent)
+	var hlrs [concurrent]AsyncResponse
 	instr := testData("hello, world!")
 	for i := 0; i < concurrent; i++ {
-		hlrs[i], err = cl.Async("any", &instr)
+		var err error
+		hlrs[i], err = tcpClient.Async("echo", &instr)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -96,7 +78,7 @@ func TestAsyncClient(t *testing.T) {
 
 	for i := range hlrs {
 		var outstr testData
-		err = hlrs[i].Read(&outstr)
+		err := hlrs[i].Read(&outstr)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -111,67 +93,10 @@ func TestAsyncClient(t *testing.T) {
 // test that 'nil' is a safe
 // argument to requests and responses
 func TestNop(t *testing.T) {
-	l, err := net.Listen("tcp", "localhost:7000")
+	err := tcpClient.Call("nop", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	defer func() {
-		l.Close()
-		time.Sleep(1 * time.Millisecond)
-	}()
-
-	go Serve(l, NopHandler{})
-
-	cl, err := Dial("tcp", "localhost:7000", 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	defer cl.Close()
-
-	err = cl.Call("any", nil, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-}
-
-// this is mostly designed to tickle
-// data races, not to test any functionality
-// in particular.
-func TestRaceForClose(t *testing.T) {
-	l, err := net.Listen("tcp", "localhost:7000")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() {
-		l.Close()
-		time.Sleep(1 * time.Millisecond)
-	}()
-	go Serve(l, EchoHandler{})
-	cl, err := Dial("tcp", "localhost:7000", 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	in := testData("hello, world")
-	var out testData
-
-	wg := new(sync.WaitGroup)
-	wg.Add(2)
-	go func() {
-		err := cl.Call("any", &in, &out)
-		if err != nil && err != ErrClosed {
-			t.Error("(*Client).Call returned", err)
-		}
-		wg.Done()
-	}()
-	go func() {
-		if err := cl.Close(); err != nil {
-			t.Error("(*Client).Close returned", err)
-		}
-		wg.Done()
-	}()
-	wg.Wait()
 }
 
 // benchmarks the test case above
@@ -218,7 +143,7 @@ func BenchmarkTCPEcho(b *testing.B) {
 // request and response, and we're using
 // unix sockets.
 func BenchmarkUnixNoop(b *testing.B) {
-	l, err := net.Listen("unix", "synapse")
+	l, err := net.Listen("unix", "bench")
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -227,7 +152,7 @@ func BenchmarkUnixNoop(b *testing.B) {
 		time.Sleep(1 * time.Millisecond)
 	}()
 	go Serve(l, NopHandler{})
-	cl, err := Dial("unix", "synapse", 5)
+	cl, err := Dial("unix", "bench", 5)
 	if err != nil {
 		b.Fatal(err)
 	}

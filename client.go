@@ -137,7 +137,7 @@ type waiter struct {
 	err    error      // response error on wakeup, if applicable
 	in     []byte     // response body
 	reap   bool       // can reap for timeout (see: (*client).timeoutLoop())
-	_      [7]byte
+	_      [sizeofPtr - 1]byte
 }
 
 // Close idempotently closes the
@@ -500,12 +500,14 @@ func (c *Client) sendCommand(cmd command, msg []byte) error {
 		return errors.New("no response CMD code")
 	}
 
-	if command(w.in[0]) == cmdInvalid {
+	ret := command(w.in[0])
+
+	if ret == cmdInvalid || ret >= _maxcommand {
 		waiters.push(w)
 		return errors.New("command invalid")
 	}
 
-	act := cmdDirectory[command(w.in[0])]
+	act := cmdDirectory[ret]
 	if act == nil {
 		waiters.push(w)
 		return errors.New("unknown CMD code returned")

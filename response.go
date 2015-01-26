@@ -4,41 +4,43 @@ import (
 	"github.com/tinylib/msgp/msgp"
 )
 
+const outPrealloc = 256
+
 // A ResponseWriter is the interface through
 // which Handlers write responses. Handlers can
 // either return a body (through Send) or an
 // error (through Error); whichever call is
-// made first wins.
+// made first should 'win'. Subsequent calls
+// to either method should no-op.
 type ResponseWriter interface {
-	// Error writes an error status
-	// to the client. Any following
-	// calls to Error or Send are no-ops.
+	// Error sets an error status
+	// to be returned to the caller
+	// instead of a full body.
 	Error(Status)
 
-	// Send sends the argument
-	// to the requester. Additional calls
-	// to send no-op. Send will error if the
-	// encoder errors or the message size
-	// is too large.
+	// Send sets the body to be
+	// returned to the caller.
 	Send(msgp.Marshaler) error
 }
 
 // ResponseWriter implementation
 type response struct {
-	out   []byte  // body
-	wrote bool    // written?
-	_     [7]byte // pad
+	out   []byte              // body
+	wrote bool                // written?
+	_     [sizeofPtr - 1]byte // pad
 }
 
 func (r *response) resetLead() {
 	// we need to save the lead bytes
 	if cap(r.out) < leadSize {
-		r.out = make([]byte, leadSize, 256)
-	} else {
-		r.out = r.out[0:leadSize]
+		r.out = make([]byte, leadSize, outPrealloc)
+		return
 	}
+	r.out = r.out[0:leadSize]
+	return
 }
 
+// base Error implementation
 func (r *response) Error(s Status) {
 	if r.wrote {
 		return
@@ -48,6 +50,7 @@ func (r *response) Error(s Status) {
 	r.out = msgp.AppendInt(r.out, int(s))
 }
 
+// base Send implementation
 func (r *response) Send(msg msgp.Marshaler) error {
 	if r.wrote {
 		return nil

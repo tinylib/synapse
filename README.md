@@ -1,7 +1,34 @@
 Synapse
 ========
 
-Synapse is a high-performance, network-protocol-agnostic, asynchronous RPC-ish framework for the Go programming language.
+## What is this?
+
+Synapse is:
+ 
+ - An RPC wire protocol base on [MessagePack](http://msgpack.org)
+ - A library implementation of that protocol in go
+
+This library was designed to work with [tinylib/msgp](http://github.com/tinylib/msgp) for serialization.
+
+## Why not MessagePack RPC?
+
+When we first started writing code for this library, it was supposed to be a MessagePack RPC implementation. 
+However, we found that the nature of the protocol makes it difficult to recover from malformed or unexpected 
+messages on the wire. The primary difference between the Synapse and MessagePack RPC protocols is that synapse
+uses length-prefixed frames to indicate the complete size of the message before it is read off of the wire. This 
+has some benefits:
+
+ - Serialization is done inside handlers, not in an I/O loop. The request/response body is copied into
+ a reserved chunk of memory and then serialization is done in a separate goroutine. Thus, serialization can 
+ fail without interrupting other messages.
+ - An unexpected or unwanted message can be *efficiently* skipped, because we do not have to 
+ traverse it to know its size. Being able to quickly discard unwanted or unexpected messages improves 
+ security against attacks designed to exhaust server resources.
+ - Message size has a hard limit at 65535 bytes, which makes it significantly more difficult to exhaust server resources (either because of traffic anomalies or a deliberate attack.)
+
+Additionally, synapse includes a message type (called "command") that allows client and server implementations 
+to probe one another programatically, which will allows us to add features (like service discovery) as the protocol 
+evolves.
 
 ## Goals
 
@@ -11,16 +38,19 @@ like HTTP and (some) RPC protocols. Like `net/rpc`, synapse can operate over mos
 As an added bonus, synapse has a much smaller per-request and per-connection memory footprint than `net/rpc` or 
 `net/http`.
 
+This repository contains only the "core" of the Synapse project. Over time, we will release middlewares  
+in other repositories, but our intention is to keep the core as small as possible.
+
 #### Non-goals
 
-Synapse is not intended to be a replacement for industrial-grade message queue solutions like ZeroMQ, RabbitMQ, etc. 
-Rather, synapse provides a convenient way to bind to a network connection without worrying about message framing, 
-multiplexing, serialization, pipelining, and so on. As synapse matures, we may release middlewares and other sorts 
-of plugins for synapse in other repositories, but our intention is to keep the core as simple as possible.
-
-As a motivating example, let's consider a "hello world" program. (You can find the complete files in `_examples/hello_world/`.)
+Synapse is not designed for large messages (there is a hard limit at 65kB), and it does not provide strong 
+ordering guarantees. At the protocol level, there is no notion of CRUD operations or any other sort of stateful 
+semantics; those are features that developers should provide at the application level. The same goes for auth. All 
+of these features can effectively be implemented as wrappers of the core library.
 
 ## Hello World
+
+As a motivating example, let's consider a "hello world" program. (You can find the complete files in `_examples/hello_world/`.)
 
 Here's what the client code looks like:
 
@@ -87,17 +117,6 @@ func main() {
 
 Very alpha. Expect frequent breaking changes to the API. We're actively looking for community feedback.
 
-## Suported Protocols
-
-The following protocols are explicitly supported:
-
- - TCP
- - TLS
- - Unix sockets
-
-Additionally, you can create clients and servers that use anything that satisfies the `net.Conn` interface on 
-both ends.
-
 ## Performance, etc.
 
 Synapse is optimized for throughput over latency; in general, synapse is designed to perform well in adverse 
@@ -111,7 +130,7 @@ details that influence performance:
  rather than making forward progress.
  - Opportunistic coalescing of network writes reduces system call overhead, without dramatically affecting latency.
  - The objects used to maintain per-request state are arena allocated during initialization. Practically speaking, 
- this means that, typically, synapse does 0 allocations per request on the client side, and 1 allocation on the 
+ this means that synapse does 0 allocations per request on the client side, and 1 allocation on the 
  server side (for `request.Name()`).
  - `tinylib/msgp` serialization is fast, compact, and versatile.
 

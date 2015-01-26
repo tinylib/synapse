@@ -5,12 +5,16 @@ import (
 	"math"
 	"net"
 	"sync"
+	"unsafe"
 
 	"github.com/philhofer/fwd"
 	"github.com/tinylib/msgp/msgp"
 )
 
 const (
+	// used to compute pad sizes
+	sizeofPtr = unsafe.Sizeof((*byte)(nil))
+
 	// leadSize is the size of a "lead frame"
 	leadSize = 11
 
@@ -28,8 +32,13 @@ const (
 // the supplied handler. It blocks until the
 // listener closes.
 func Serve(l net.Listener, h Handler) error {
-	s := server{l, h}
-	return s.serve()
+	for {
+		c, err := l.Accept()
+		if err != nil {
+			return err
+		}
+		go ServeConn(c, h)
+	}
 }
 
 // ListenAndServeTLS acts identically to ListenAndServe, except that
@@ -50,8 +59,7 @@ func ListenAndServeTLS(network, laddr string, certFile, keyFile string, h Handle
 	if err != nil {
 		return err
 	}
-	s := server{l, h}
-	return s.serve()
+	return Serve(l, h)
 }
 
 // ListenAndServe opens up a network listener
@@ -64,38 +72,23 @@ func ListenAndServe(network string, laddr string, h Handler) error {
 	if err != nil {
 		return err
 	}
-	s := server{l, h}
-	return s.serve()
+	return Serve(l, h)
 }
 
 // ServeConn serves an individual network
 // connection. It blocks until the connection
-// is closed.
+// is closed or it encounters a fatal error.
 func ServeConn(c net.Conn, h Handler) {
 	ch := connHandler{
 		conn:    c,
 		h:       h,
+		remote:  c.RemoteAddr(),
 		writing: make(chan *connWrapper, 32),
 	}
 	go ch.writeLoop()
 	ch.connLoop()     // returns on connection close
 	ch.wg.Wait()      // wait for handlers to return
 	close(ch.writing) // close output queue
-}
-
-type server struct {
-	l net.Listener
-	h Handler
-}
-
-func (s *server) serve() error {
-	for {
-		conn, err := s.l.Accept()
-		if err != nil {
-			return err
-		}
-		go ServeConn(conn, s.h)
-	}
 }
 
 func readFrame(lead [leadSize]byte) (seq uint64, ft fType, sz int) {
@@ -129,6 +122,7 @@ func putFrame(bts []byte, seq uint64, ft fType, sz int) {
 type connHandler struct {
 	h       Handler
 	conn    net.Conn
+	remote  net.Addr
 	wg      sync.WaitGroup    // outstanding handlers
 	writing chan *connWrapper // write queue
 }
@@ -159,20 +153,18 @@ func (c *connHandler) writeLoop() error {
 			// goroutine.
 			return nil
 		}
-		_, err = bwr.Write(cw.res.out)
-		if err != nil {
-			c.conn.Close()
+		if !c.do(bwr.Write(cw.res.out)) {
 			goto flush
 		}
+
 		wrappers.push(cw)
 	more:
 		select {
 		case another, ok := <-c.writing:
 			if ok {
-				_, err = bwr.Write(another.res.out)
+				f := c.do(bwr.Write(another.res.out))
 				wrappers.push(another)
-				if err != nil {
-					c.conn.Close()
+				if !f {
 					goto flush
 				}
 				goto more
@@ -181,9 +173,7 @@ func (c *connHandler) writeLoop() error {
 				return nil
 			}
 		default:
-			err = bwr.Flush()
-			if err != nil {
-				c.conn.Close()
+			if !c.do(0, bwr.Flush()) {
 				goto flush
 			}
 		}
@@ -195,26 +185,35 @@ flush:
 	return err
 }
 
+func (c *connHandler) do(i int, err error) bool {
+	if err != nil {
+		c.conn.Close()
+		return false
+	}
+	return true
+}
+
 // connLoop continuously polls the connection.
 // requests are read synchronously; the responses
 // are written in a spawned goroutine
-func (c *connHandler) connLoop() error {
+func (c *connHandler) connLoop() {
 	brd := fwd.NewReaderSize(c.conn, 4096)
-	remote := c.conn.RemoteAddr()
 
-	var lead [leadSize]byte
-	var seq uint64
-	var sz int
-	var frame fType
+	var (
+		lead  [leadSize]byte
+		seq   uint64
+		sz    int
+		frame fType
+		err   error
+	)
+
 	for {
 		// loop:
 		//  - read seq, type, sz
 		//  - call handler asynchronously
 
-		_, err := brd.ReadFull(lead[:])
-		if err != nil {
-			c.conn.Close()
-			return err
+		if !c.do(brd.ReadFull(lead[:])) {
+			return
 		}
 		seq, frame, sz = readFrame(lead)
 
@@ -237,7 +236,7 @@ func (c *connHandler) connLoop() error {
 			}
 			if err != nil {
 				c.conn.Close()
-				return err
+				return
 			}
 			c.wg.Add(1)
 			go handleCmd(c, seq, cmd, body)
@@ -247,10 +246,8 @@ func (c *connHandler) connLoop() error {
 		// the only valid frame
 		// type left is fREQ
 		if frame != fREQ {
-			_, err = brd.Skip(sz)
-			if err != nil {
-				c.conn.Close()
-				return err
+			if !c.do(brd.Skip(sz)) {
+				return
 			}
 			continue
 		}
@@ -263,16 +260,14 @@ func (c *connHandler) connLoop() error {
 			w.in = make([]byte, sz)
 		}
 
-		_, err = brd.ReadFull(w.in)
-		if err != nil {
-			c.conn.Close()
-			return err
+		if !c.do(brd.ReadFull(w.in)) {
+			return
 		}
 
 		// trigger handler
 		w.seq = seq
 		c.wg.Add(1)
-		go c.handleReq(w, remote)
+		go c.handleReq(w)
 	}
 }
 
@@ -288,9 +283,9 @@ type connWrapper struct {
 
 // handleconn sets up the Request and ResponseWriter
 // interfaces and calls the handler.
-func (c *connHandler) handleReq(cw *connWrapper, remote net.Addr) {
+func (c *connHandler) handleReq(cw *connWrapper) {
 	// clear/reset everything
-	cw.req.addr = remote
+	cw.req.addr = c.remote
 	cw.res.wrote = false
 
 	var err error
@@ -310,12 +305,15 @@ func (c *connHandler) handleReq(cw *connWrapper, remote net.Addr) {
 
 	blen := len(cw.res.out) - leadSize // length minus frame length
 	putFrame(cw.res.out, cw.seq, fRES, blen)
-
 	c.writing <- cw
 	c.wg.Done()
 }
 
 func handleCmd(c *connHandler, seq uint64, cmd command, body []byte) {
+	if cmd == cmdInvalid || cmd >= _maxcommand {
+		return
+	}
+
 	act := cmdDirectory[cmd]
 	resbyte := byte(cmd)
 	var res []byte

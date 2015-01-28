@@ -25,10 +25,12 @@ type Status int
 // an error to send to the
 // client.
 const (
-	// The zero value for
-	// Status is InvalidStatus
+	// InvalidStatus is the
+	// zero value of Status.
 	InvalidStatus Status = iota
 
+	// un-exported, because 'ok'
+	// is not really an error
 	okStatus
 
 	// NotFound means the

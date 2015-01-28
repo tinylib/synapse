@@ -30,6 +30,6 @@ func main() {
 		fmt.Println(err)
 		return
 	}
-
+	fmt.Println("listening on :7070...")
 	fmt.Println(synapse.Serve(l, mux))
 }

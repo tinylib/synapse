@@ -23,22 +23,9 @@ func main() {
 	pi := 3.14159
 	num := Num{Value: pi}
 
-	// here we make an asynchronous
-	// call to the service
 	fmt.Println("Asking the remote server to double 3.14159 for us...")
-	res, err := cl.Async("double", &num)
+	err = cl.Call("double", &num, synapse.JSPipe(os.Stdout))
 	if err != nil {
-		fmt.Println(err)
-		return
-	}
-
-	// the call to Read blocks
-	// until we get a response.
-	// JSPipe sends whatever data
-	// is returned to an io.Writer as
-	// JSON.
-	err = res.Read(synapse.JSPipe(os.Stdout))
-	if err != nil {
-		fmt.Println(err)
+		fmt.Println("ERROR:", err)
 	}
 }

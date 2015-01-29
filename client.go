@@ -287,6 +287,7 @@ func (c *Client) writeLoop() {
 		if !ok {
 			return
 		}
+		c.pending.insert(wt)
 		// write it
 		if !c.do(bwr.Write(wt.in)) {
 			return
@@ -297,6 +298,7 @@ func (c *Client) writeLoop() {
 		select {
 		case another, ok := <-c.writing:
 			if ok {
+				c.pending.insert(another)
 				if !c.do(bwr.Write(another.in)) {
 					return
 				}
@@ -369,7 +371,6 @@ func (w *waiter) writeCommand(cmd command, msg []byte) error {
 		p.mlock.RUnlock()
 		return ErrClosed
 	}
-	p.pending.insert(w)
 	p.writing <- w
 	p.mlock.RUnlock()
 	return nil
@@ -429,7 +430,6 @@ func (w *waiter) write(method string, in msgp.Marshaler) error {
 		p.mlock.RUnlock()
 		return ErrClosed
 	}
-	p.pending.insert(w)
 	p.writing <- w
 	p.mlock.RUnlock()
 	return nil

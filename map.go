@@ -5,7 +5,13 @@ import (
 )
 
 const (
+
+	// increasing this wastes memory in order to save time.
+	// empirically, this is large enough that map lock contention
+	// is not a bottleneck over net.Pipe(), and thus it is large
+	// enough for virtually all real-world use.
 	rootBits = 6
+
 	rootSize = 1 << rootBits
 	rootMask = rootSize - 1
 )
@@ -13,18 +19,13 @@ const (
 // waiterMap is part radix-tree, part linked list.
 // we're taking advantage of the fact that sequence
 // numbers increase monotonically in order to do finer-grained
-// locking on the state of the map. the root is statically allocated
-// so that we don't have to lock around it.
-//
-// also worth pointing out is that waiterMap requires zero
-// allocation to add/remove elements.
-type waiterMap struct {
-	root [rootSize]prefixNode
-}
+// locking on the state of the map. also, we can do timeout
+// and error flushing on a fine-grained basis as well.
+type waiterMap [rootSize]prefixNode
 
 // returns a sequence number's canonical node
 func (w *waiterMap) node(seq uint64) *prefixNode {
-	return &w.root[seq&rootMask]
+	return &w[seq&rootMask]
 }
 
 // a node is just a linked list of *waiter with
@@ -70,6 +71,36 @@ func (n *prefixNode) size() (i int) {
 	return
 }
 
+func (n *prefixNode) reap() {
+	n.Lock()
+	prev := &n.list
+	for cur := n.list; cur != nil; cur = cur.next {
+		if cur.reap {
+			*prev = cur.next
+			cur.err = ErrTimeout
+			cur.next = nil
+			cur.done.Lock()
+		} else {
+			cur.reap = true
+			prev = &cur.next
+		}
+	}
+	n.Unlock()
+}
+
+func (n *prefixNode) flush(err error) {
+	n.Lock()
+	var next *waiter
+	for l := n.list; l != nil; {
+		next, l.next = l.next, nil
+		l.err = nil
+		l.done.Unlock()
+		l = next
+	}
+	n.list = nil
+	n.Unlock()
+}
+
 // insert inserts a value, and has undefined
 // behavior if it already exists
 func (w *waiterMap) insert(q *waiter) {
@@ -84,8 +115,8 @@ func (w *waiterMap) remove(seq uint64) *waiter {
 
 // return the total size of the map
 func (w *waiterMap) length() (count int) {
-	for i := range w.root {
-		count += w.root[i].size()
+	for i := range w {
+		count += w[i].size()
 	}
 	return count
 }
@@ -93,49 +124,16 @@ func (w *waiterMap) length() (count int) {
 // unlock every waiter with the provided error,
 // and then zero out the entire contents of the map
 func (w *waiterMap) flush(err error) {
-	for i := range w.root {
-		n := &w.root[i]
-		n.Lock()
-		l := n.list
-		for l != nil {
-			next := l.next
-			l.err = err
-			l.next = nil
-			l.done.Unlock()
-			l = next
-		}
-		n.list = nil
-		n.Unlock()
+	for i := range w {
+		w[i].flush(err)
 	}
 }
 
-// reap carries out a timeout reap (basically
-// a timed garbage collection)
+// reap carries out a timeout reap.
+// if (*waiter).reap==true, then delete it,
+// otherwise set (*waiter).reap to true.
 func (w *waiterMap) reap() {
-	for i := range w.root {
-		n := &w.root[i]
-		n.Lock()
-
-		// points to the pointer
-		// that is pointing to 'cur'
-		prev := &n.list
-
-		for cur := n.list; cur != nil; cur = cur.next {
-			if cur.reap {
-
-				// sets the pointer pointing to this
-				// waiter to instead point to the next one
-				*prev = cur.next
-
-				cur.err = ErrTimeout
-				cur.next = nil
-				cur.done.Lock()
-			} else {
-				cur.reap = true
-				prev = &cur.next
-			}
-		}
-
-		n.Unlock()
+	for i := range w {
+		w[i].reap()
 	}
 }

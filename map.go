@@ -71,6 +71,8 @@ func (n *prefixNode) size() (i int) {
 	return
 }
 
+// flush waiters marked with 'reap',
+// and mark unmarked waiters.
 func (n *prefixNode) reap() {
 	n.Lock()
 	prev := &n.list
@@ -79,7 +81,7 @@ func (n *prefixNode) reap() {
 			*prev = cur.next
 			cur.err = ErrTimeout
 			cur.next = nil
-			cur.done.Lock()
+			cur.done.Unlock()
 		} else {
 			cur.reap = true
 			prev = &cur.next
@@ -88,12 +90,13 @@ func (n *prefixNode) reap() {
 	n.Unlock()
 }
 
+// flush the entire contents of the node
 func (n *prefixNode) flush(err error) {
 	n.Lock()
 	var next *waiter
 	for l := n.list; l != nil; {
 		next, l.next = l.next, nil
-		l.err = nil
+		l.err = err
 		l.done.Unlock()
 		l = next
 	}

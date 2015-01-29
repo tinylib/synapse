@@ -16,20 +16,14 @@ import (
 const (
 	defaultTimeout = 3000 // three seconds
 
-	// waiter "high water mark,"
-	// maximum number of queued writes.
-	// we start throttling requests after
-	// we reach this point.
+	// waiter "high water mark"
 	// TODO(maybe): make this adjustable.
 	waiterHWM = 32
 )
 
-type clientState byte
-
 const (
-	zeroState clientState = iota
-	closedState
-	openState
+	clientClosed = iota
+	clientOpen
 )
 
 var (
@@ -47,18 +41,6 @@ var (
 	// size is larger than 65,535 bytes.
 	ErrTooLarge = errors.New("synapse: message body too large")
 )
-
-// AsyncResponse is returned by
-// calls to (*Client).Async
-type AsyncResponse interface {
-	// Read reads the response to the
-	// request into the object, returning
-	// any errors encountered. Read blocks
-	// until a response is received. Calling
-	// Read more than once will cause undefined behavior.
-	// Calling Read(nil) discards the response.
-	Read(out msgp.Unmarshaler) error
-}
 
 // Dial creates a new client by dialing
 // the provided network and remote address.
@@ -93,7 +75,7 @@ func NewClient(c net.Conn, timeout int64) (*Client, error) {
 		conn:    c,
 		writing: make(chan *waiter, waiterHWM),
 		done:    make(chan struct{}),
-		state:   openState,
+		state:   clientOpen,
 	}
 	go cl.readLoop()
 	go cl.writeLoop()
@@ -118,49 +100,42 @@ func NewClient(c net.Conn, timeout int64) (*Client, error) {
 // Client is a client to
 // a single synapse server.
 type Client struct {
-	conn    net.Conn      // connection
-	csn     uint64        // sequence number; atomic
-	mlock   sync.RWMutex  // protects 'state', held by writing goroutines
-	writing chan *waiter  // queue to write to conn; size is effectively HWM
-	done    chan struct{} // closed during (*Client).Close to shut down timeoutloop
-	state   clientState   // open, closed, etc.
-	pending waiterMap     // map seq number to waiting handler
+	conn    net.Conn       // connection
+	csn     uint64         // sequence number; atomic
+	writing chan *waiter   // queue to write to conn; size is effectively HWM
+	done    chan struct{}  // closed during (*Client).Close to shut down timeoutloop
+	wg      sync.WaitGroup // outstanding client procs
+	state   uint32         // open, closed, etc.
+	pending waiterMap      // map seq number to waiting handler
 }
 
 // used to transfer control
 // flow to blocking goroutines
 type waiter struct {
-	next   *waiter    // next in linked list, or self
+	next   *waiter    // next in linked list, or nil
 	parent *Client    // parent *client
 	seq    uint64     // sequence number
 	done   sync.Mutex // for notifying response; locked is default
 	err    error      // response error on wakeup, if applicable
 	in     []byte     // response body
 	reap   bool       // can reap for timeout (see: (*client).timeoutLoop())
-	static bool       // is part of the statically allocated array
+	static bool       // is part of the statically allocated arena
 	_      [sizeofPtr - 2]byte
 }
 
 // Close idempotently closes the
 // client's connection to the server.
-// Goroutines blocked waiting for
-// responses from the server will be
-// unblocked with an error.
+// Close returns once every waiting
+// goroutine has either received a
+// response or timed out; goroutines
+// with requests in progress are not interrupted.
 func (c *Client) Close() error {
-	// don't let blocking reads/writes
-	// prevent another goroutine from
-	// unlocking the map lock (eventually)
-	c.conn.SetWriteDeadline(time.Now().Add(1 * time.Second))
-	c.conn.SetReadDeadline(time.Now().Add(1 * time.Second))
-
-	c.mlock.Lock()
-	if c.state == closedState {
-		c.mlock.Unlock()
+	// there can only be one winner in the Close() race
+	if !atomic.CompareAndSwapUint32(&c.state, clientOpen, clientClosed) {
 		return ErrClosed
 	}
-	c.state = closedState
-	c.pending.flush(ErrClosed)
-	c.mlock.Unlock()
+
+	c.wg.Wait()
 	close(c.done)
 	close(c.writing)
 	return c.conn.Close()
@@ -168,18 +143,22 @@ func (c *Client) Close() error {
 
 // close with error
 // sets the status of every waiting
-// goroutine to 'err' and unblocks it
+// goroutine to 'err' and unblocks it.
 func (c *Client) closeError(err error) {
-	err = fmt.Errorf("synapse: fatal error: %s", err)
-
-	c.mlock.Lock()
-	if c.state == closedState {
-		c.mlock.Unlock()
+	if !atomic.CompareAndSwapUint32(&c.state, clientOpen, clientClosed) {
 		return
 	}
-	c.state = closedState
+
+	err = fmt.Errorf("synapse: fatal error: %s", err)
+
+	// we can't actually guarantee that we will preempt
+	// every goroutine, but we can try.
 	c.pending.flush(err)
-	c.mlock.Unlock()
+	for c.pending.length() > 0 {
+		c.pending.flush(err)
+	}
+
+	c.wg.Wait()
 	close(c.done)
 	close(c.writing)
 	c.conn.Close()
@@ -227,20 +206,7 @@ func (c *Client) readLoop() {
 			continue
 		}
 
-		// note: this lock
-		// is also acquired by
-		// writing goroutines, which
-		// may block while holding the lock.
-		//c.mlock.Lock()
-		//w, ok := c.pending[seq]
-		//if ok {
-		//		delete(c.pending, seq)
-		//}
-		//c.mlock.Unlock()
-
 		w := c.pending.remove(seq)
-
-		//if !ok {
 		if w == nil {
 			if !c.do(bwr.Skip(sz)) {
 				return
@@ -287,7 +253,6 @@ func (c *Client) writeLoop() {
 		if !ok {
 			return
 		}
-		c.pending.insert(wt)
 		// write it
 		if !c.do(bwr.Write(wt.in)) {
 			return
@@ -298,7 +263,6 @@ func (c *Client) writeLoop() {
 		select {
 		case another, ok := <-c.writing:
 			if ok {
-				c.pending.insert(another)
 				if !c.do(bwr.Write(another.in)) {
 					return
 				}
@@ -329,9 +293,7 @@ func (c *Client) timeoutLoop(msec int64) {
 		case <-c.done:
 			return
 		case <-tick:
-			c.mlock.RLock()
 			c.pending.reap()
-			c.mlock.RUnlock()
 		}
 	}
 }
@@ -339,12 +301,16 @@ func (c *Client) timeoutLoop(msec int64) {
 // write a command to the connection - works
 // similarly to standard write()
 func (w *waiter) writeCommand(cmd command, msg []byte) error {
+	if atomic.LoadUint32(&w.parent.state) == clientClosed {
+		return ErrClosed
+	}
+	w.parent.wg.Add(1)
+	seqn := atomic.AddUint64(&w.parent.csn, 1)
+
 	cmdlen := len(msg) + 1
 	if cmdlen > maxMessageSize {
 		return ErrTooLarge
 	}
-
-	seqn := atomic.AddUint64(&w.parent.csn, 1)
 
 	// write frame + message
 	need := leadSize + cmdlen
@@ -360,23 +326,19 @@ func (w *waiter) writeCommand(cmd command, msg []byte) error {
 	w.reap = false
 	w.seq = seqn
 
-	// the whole write process must
-	// be atomic with respect to
-	// the map write and channel send
-	// in order to prevent racing on
-	// (*Client).Close
 	p := w.parent
-	p.mlock.RLock()
-	if p.state != openState {
-		p.mlock.RUnlock()
-		return ErrClosed
-	}
+	p.pending.insert(w)
 	p.writing <- w
-	p.mlock.RUnlock()
 	return nil
 }
 
 func (w *waiter) write(method string, in msgp.Marshaler) error {
+	if atomic.LoadUint32(&w.parent.state) == clientClosed {
+		return ErrClosed
+	}
+	w.parent.wg.Add(1)
+	sn := atomic.AddUint64(&w.parent.csn, 1)
+
 	var err error
 
 	// save bytes up front
@@ -405,7 +367,6 @@ func (w *waiter) write(method string, in msgp.Marshaler) error {
 		return ErrTooLarge
 	}
 
-	sn := atomic.AddUint64(&w.parent.csn, 1)
 	putFrame(w.in, sn, fREQ, olen)
 	w.reap = false
 	w.seq = sn
@@ -425,13 +386,8 @@ func (w *waiter) write(method string, in msgp.Marshaler) error {
 	// that we cannot increase memory footprint
 	// without bound.
 	p := w.parent
-	p.mlock.RLock()
-	if p.state != openState {
-		p.mlock.RUnlock()
-		return ErrClosed
-	}
+	p.pending.insert(w)
 	p.writing <- w
-	p.mlock.RUnlock()
 	return nil
 }
 
@@ -456,6 +412,7 @@ func (w *waiter) call(method string, in msgp.Marshaler, out msgp.Unmarshaler) er
 	}
 	// wait for response
 	w.done.Lock()
+	w.parent.wg.Done()
 	if w.err != nil {
 		return w.err
 	}
@@ -482,7 +439,7 @@ func (c *Client) sendCommand(cmd command, msg []byte) error {
 
 	// wait
 	w.done.Lock()
-
+	c.wg.Done()
 	if w.err != nil {
 		return w.err
 	}
@@ -516,31 +473,4 @@ func (c *Client) sendCommand(cmd command, msg []byte) error {
 // didn't respond appropriately
 func (c *Client) ping() error {
 	return c.sendCommand(cmdPing, nil)
-}
-
-// AsyncResponse.Read implementation
-func (w *waiter) Read(out msgp.Unmarshaler) error {
-	w.done.Lock()
-	if w.err != nil {
-		return w.err
-	}
-	err := w.read(out)
-	waiters.push(w)
-	return err
-}
-
-// Async sends a request to the server, but does not
-// wait for a response. The returned AsyncResponse object
-// should be used to decode the response. After the first
-// call to Read(), the returned AsyncResponse object becomes
-// invalid. Async is safe to call from multiple goroutines
-// simultaneously.
-func (c *Client) Async(method string, in msgp.Marshaler) (AsyncResponse, error) {
-	w := waiters.pop(c)
-	err := w.write(method, in)
-	if err != nil {
-		waiters.push(w)
-		return nil, err
-	}
-	return w, nil
 }

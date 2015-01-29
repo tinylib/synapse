@@ -4,11 +4,6 @@ import (
 	"testing"
 )
 
-type testval struct {
-	seq uint64
-	w   *waiter
-}
-
 func TestWaiterMap(t *testing.T) {
 	mp := &waiterMap{}
 
@@ -17,20 +12,28 @@ func TestWaiterMap(t *testing.T) {
 		t.Error("remove() should return 'nil' from an empty map")
 	}
 
-	vals := make([]testval, 1000)
+	vals := make([]waiter, 1000)
 	for i := range vals {
 		vals[i].seq = uint64(i) * 17
-		vals[i].w = &waiter{}
 	}
 
-	for _, v := range vals {
-		mp.insert(v.seq, v.w)
+	for i := range vals {
+		mp.insert(&vals[i])
 	}
 
-	for _, x := range vals {
-		q := mp.remove(x.seq)
-		if q != x.w {
-			t.Errorf("expected %v; got %v", x.w, q)
+	if mp.length() != 1000 {
+		t.Errorf("expected map to have 1000 elements; found %d", mp.length())
+	}
+
+	for i := range vals {
+		q := mp.remove(vals[i].seq)
+		if q != &vals[i] {
+			t.Errorf("expected %v; got %v", &vals[i], q)
 		}
+	}
+
+	l := mp.length()
+	if l != 0 {
+		t.Errorf("expected map to have 0 elements; found %d", l)
 	}
 }

@@ -126,7 +126,7 @@ func BenchmarkTCPEcho(b *testing.B) {
 		instr := testData("hello, world!")
 		var outstr testData
 		for pb.Next() {
-			err = cl.Call("echo", &instr, &outstr)
+			err := cl.Call("echo", &instr, &outstr)
 			if err != nil {
 				b.Fatal(err)
 			}

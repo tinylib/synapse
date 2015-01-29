@@ -91,7 +91,6 @@ func DialTLS(network, raddr string, timeout int64, config *tls.Config) (*Client,
 func NewClient(c net.Conn, timeout int64) (*Client, error) {
 	cl := &Client{
 		conn:    c,
-		pending: newWaiterMap(),
 		writing: make(chan *waiter, waiterHWM),
 		done:    make(chan struct{}),
 		state:   openState,
@@ -121,11 +120,11 @@ func NewClient(c net.Conn, timeout int64) (*Client, error) {
 type Client struct {
 	conn    net.Conn      // connection
 	csn     uint64        // sequence number; atomic
-	mlock   sync.Mutex    // to protect 'mlock' and 'state'
-	pending *waiterMap    // map seq number to waiting handler
+	mlock   sync.RWMutex  // protects 'state', held by writing goroutines
 	writing chan *waiter  // queue to write to conn; size is effectively HWM
 	done    chan struct{} // closed during (*Client).Close to shut down timeoutloop
 	state   clientState   // open, closed, etc.
+	pending waiterMap     // map seq number to waiting handler
 }
 
 // used to transfer control
@@ -133,11 +132,13 @@ type Client struct {
 type waiter struct {
 	next   *waiter    // next in linked list, or self
 	parent *Client    // parent *client
+	seq    uint64     // sequence number
 	done   sync.Mutex // for notifying response; locked is default
 	err    error      // response error on wakeup, if applicable
 	in     []byte     // response body
 	reap   bool       // can reap for timeout (see: (*client).timeoutLoop())
-	_      [sizeofPtr - 1]byte
+	static bool       // is part of the statically allocated array
+	_      [sizeofPtr - 2]byte
 }
 
 // Close idempotently closes the
@@ -158,11 +159,6 @@ func (c *Client) Close() error {
 		return ErrClosed
 	}
 	c.state = closedState
-	//for _, val := range c.pending {
-	//		val.err = ErrClosed
-	//	val.done.Unlock()
-	//}
-
 	c.pending.flush(ErrClosed)
 	c.mlock.Unlock()
 	close(c.done)
@@ -182,10 +178,6 @@ func (c *Client) closeError(err error) {
 		return
 	}
 	c.state = closedState
-	//for _, val := range c.pending {
-	//	val.err = err
-	//		val.done.Unlock()
-	//}
 	c.pending.flush(err)
 	c.mlock.Unlock()
 	close(c.done)
@@ -335,7 +327,9 @@ func (c *Client) timeoutLoop(msec int64) {
 		case <-c.done:
 			return
 		case <-tick:
+			c.mlock.RLock()
 			c.pending.reap()
+			c.mlock.RUnlock()
 		}
 	}
 }
@@ -360,7 +354,9 @@ func (w *waiter) writeCommand(cmd command, msg []byte) error {
 	putFrame(w.in, seqn, fCMD, cmdlen)
 	w.in[leadSize] = byte(cmd)
 	copy(w.in[leadSize+1:], msg)
+
 	w.reap = false
+	w.seq = seqn
 
 	// the whole write process must
 	// be atomic with respect to
@@ -368,15 +364,14 @@ func (w *waiter) writeCommand(cmd command, msg []byte) error {
 	// in order to prevent racing on
 	// (*Client).Close
 	p := w.parent
-	//p.mlock.Lock()
+	p.mlock.RLock()
 	if p.state != openState {
-		//p.mlock.Unlock()
+		p.mlock.RUnlock()
 		return ErrClosed
 	}
-	//p.pending[seqn] = w
-	p.pending.insert(seqn, w)
+	p.pending.insert(w)
 	p.writing <- w
-	//p.mlock.Unlock()
+	p.mlock.RUnlock()
 	return nil
 }
 
@@ -412,6 +407,7 @@ func (w *waiter) write(method string, in msgp.Marshaler) error {
 	sn := atomic.AddUint64(&w.parent.csn, 1)
 	putFrame(w.in, sn, fREQ, olen)
 	w.reap = false
+	w.seq = sn
 
 	// the whole write process must
 	// be atomic with respect to
@@ -428,15 +424,14 @@ func (w *waiter) write(method string, in msgp.Marshaler) error {
 	// that we cannot increase memory footprint
 	// without bound.
 	p := w.parent
-	//p.mlock.Lock()
+	p.mlock.RLock()
 	if p.state != openState {
-		//w.parent.mlock.Unlock()
+		p.mlock.RUnlock()
 		return ErrClosed
 	}
-	//p.pending[sn] = w
-	p.pending.insert(sn, w)
+	p.pending.insert(w)
 	p.writing <- w
-	//p.mlock.Unlock()
+	p.mlock.RUnlock()
 	return nil
 }
 

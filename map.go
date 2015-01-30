@@ -24,41 +24,51 @@ const (
 type waiterMap [rootSize]prefixNode
 
 // returns a sequence number's canonical node
-func (w *waiterMap) node(seq uint64) *prefixNode {
-	return &w[seq&rootMask]
-}
+func (w *waiterMap) node(seq uint64) *prefixNode { return &w[seq&rootMask] }
 
 // a node is just a linked list of *waiter with
 // a mutex protecting access
 type prefixNode struct {
 	sync.Mutex
 	list *waiter // stack of *waiter
+	tail *waiter // insert point
 }
 
+// pop searches the list from top to bottom
+// for the sequence number 'seq' and removes
+// the *waiter from the list if it exists. returns
+// nil otherwise.
 func (n *prefixNode) pop(seq uint64) *waiter {
 	n.Lock()
 
-	// this **waiter is the pointer
-	// to the previous pointer-to-waiter
-	prev := &n.list
-
+	fwd := &n.list
+	var prev *waiter
 	for cur := n.list; cur != nil; cur = cur.next {
 		if cur.seq == seq {
-			*prev = cur.next
-			cur.next = nil
+			if cur == n.tail {
+				n.tail = prev
+			}
+			*fwd, cur.next = cur.next, nil
 			n.Unlock()
 			return cur
 		}
-		prev = &cur.next
+		fwd = &cur.next
+		prev = cur
 	}
 
 	n.Unlock()
 	return nil
 }
 
+// insert puts a waiter at the tail of the list
 func (n *prefixNode) insert(q *waiter) {
 	n.Lock()
-	n.list, q.next = q, n.list
+	if n.list == nil {
+		n.list = q
+	} else {
+		n.tail.next = q
+	}
+	n.tail = q
 	n.Unlock()
 }
 
@@ -75,16 +85,22 @@ func (n *prefixNode) size() (i int) {
 // and mark unmarked waiters.
 func (n *prefixNode) reap() {
 	n.Lock()
-	prev := &n.list
-	for cur := n.list; cur != nil; cur = cur.next {
+	fwd := &n.list
+	var prev *waiter
+	for cur := n.list; cur != nil; {
 		if cur.reap {
-			*prev = cur.next
+			if cur == n.tail {
+				n.tail = prev
+			}
+			*fwd, cur.next = cur.next, nil
 			cur.err = ErrTimeout
-			cur.next = nil
 			cur.done.Unlock()
+			cur = *fwd
 		} else {
 			cur.reap = true
-			prev = &cur.next
+			prev = cur
+			fwd = &cur.next
+			cur = cur.next
 		}
 	}
 	n.Unlock()
@@ -101,6 +117,7 @@ func (n *prefixNode) flush(err error) {
 		l = next
 	}
 	n.list = nil
+	n.tail = nil
 	n.Unlock()
 }
 

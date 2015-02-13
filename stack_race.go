@@ -15,12 +15,12 @@ var (
 type waitStack struct{}
 type connStack struct{}
 
-func (_ waitStack) push(_ *waiter) {}
-func (_ waitStack) pop(c *Client) *waiter {
+func (ws waitStack) push(_ *waiter) {}
+func (ws waitStack) pop(c *Client) *waiter {
 	w := &waiter{parent: c}
 	w.done.Lock()
 	return w
 }
 
-func (_ connStack) pop() *connWrapper   { return &connWrapper{} }
-func (_ connStack) push(_ *connWrapper) {}
+func (cs connStack) pop() *connWrapper   { return &connWrapper{} }
+func (cs connStack) push(_ *connWrapper) {}

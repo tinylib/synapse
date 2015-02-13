@@ -34,14 +34,9 @@ func TestClient(t *testing.T) {
 	wg.Wait()
 
 	// test for NotFound
-	res, err := tcpClient.Async("doesn't-exist", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	err = res.Read(nil)
+	err := tcpClient.Call("doesn't-exist", nil, nil)
 	if err != NotFound {
-		t.Errorf("got error %q; expected %q", err, NotFound)
+		t.Errorf("expected error %v; got %v", NotFound, err)
 	}
 }
 
@@ -59,35 +54,6 @@ func TestDebugClient(t *testing.T) {
 	if instr != outstr {
 		t.Fatal("input and output not equal")
 	}
-}
-
-func TestAsyncClient(t *testing.T) {
-
-	// make 5 requests, then
-	// read 5 responses
-	const concurrent = 5
-	var hlrs [concurrent]AsyncResponse
-	instr := testData("hello, world!")
-	for i := 0; i < concurrent; i++ {
-		var err error
-		hlrs[i], err = tcpClient.Async("echo", &instr)
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	for i := range hlrs {
-		var outstr testData
-		err := hlrs[i].Read(&outstr)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		if !bytes.Equal([]byte(instr), []byte(outstr)) {
-			t.Errorf("%q in; %q out", instr, outstr)
-		}
-	}
-
 }
 
 // test that 'nil' is a safe
@@ -126,7 +92,7 @@ func BenchmarkTCPEcho(b *testing.B) {
 		instr := testData("hello, world!")
 		var outstr testData
 		for pb.Next() {
-			err = cl.Call("echo", &instr, &outstr)
+			err := cl.Call("echo", &instr, &outstr)
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -138,10 +104,6 @@ func BenchmarkTCPEcho(b *testing.B) {
 	b.StopTimer()
 }
 
-// this is basically the fastest possible
-// arrangement; we have a no-op (no body)
-// request and response, and we're using
-// unix sockets.
 func BenchmarkUnixNoop(b *testing.B) {
 	l, err := net.Listen("unix", "bench")
 	if err != nil {

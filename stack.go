@@ -16,11 +16,9 @@ import (
 // then create a LIFO out of them during
 // initialization. if we run out of elements
 // in the stack, we fall back to using the
-// heap, and we set the 'next' pointer
-// in the returned element to itself.
-// push() operations check for 'next==self'
-// and no-op in that case, since we don't
-// want the stack to grow forever without bound.
+// heap. wrappers are heap-allocated if
+// c.next == c, and waiters are heap allocated
+// if (*waiter).static == false.
 
 const arenaSize = 512
 
@@ -36,9 +34,11 @@ func init() {
 	// set up the pointers and lock
 	// the waiter semaphores
 	waiterSlab[0].done.Lock()
+	waiterSlab[0].static = true
 	for i := 0; i < (arenaSize - 1); i++ {
 		waiterSlab[i].next = &waiterSlab[i+1]
 		waiterSlab[i+1].done.Lock()
+		waiterSlab[i+1].static = true
 		wrapperSlab[i].next = &wrapperSlab[i+1]
 	}
 	waiters.top = &waiterSlab[0]
@@ -78,18 +78,22 @@ func (s *connStack) push(ptr *connWrapper) {
 	return
 }
 
+// the following should always hold:
+//  - ptr.next = nil
+//  - ptr.parent = c
+//  - ptr.done is Lock()ed
 func (s *waitStack) pop(c *Client) (ptr *waiter) {
 	spin.Lock(&s.lock)
 	if s.top != nil {
 		ptr, s.top = s.top, s.top.next
 		spin.Unlock(&s.lock)
 		ptr.parent = c
-		return ptr
+		ptr.next = nil
+		return
 	}
 	spin.Unlock(&s.lock)
 	ptr = &waiter{}
 	ptr.parent = c
-	ptr.next = ptr
 	ptr.done.Lock()
 	return
 }
@@ -97,7 +101,7 @@ func (s *waitStack) pop(c *Client) (ptr *waiter) {
 func (s *waitStack) push(ptr *waiter) {
 	ptr.parent = nil
 	ptr.err = nil
-	if ptr.next == ptr {
+	if !ptr.static {
 		return
 	}
 	spin.Lock(&s.lock)

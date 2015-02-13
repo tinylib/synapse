@@ -99,12 +99,12 @@ func TestMain(m *testing.M) {
 
 	go Serve(ul, rt)
 
-	tcpClient, err = Dial("tcp", ":7070", 5)
+	tcpClient, err = Dial("tcp", ":7070", 5*time.Millisecond)
 	if err != nil {
 		panic(err)
 	}
 
-	unxClient, err = Dial("unix", "synapse", 5)
+	unxClient, err = Dial("unix", "synapse", 5*time.Millisecond)
 	if err != nil {
 		panic(err)
 	}

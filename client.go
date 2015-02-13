@@ -46,7 +46,7 @@ var (
 // the provided network and remote address.
 // The provided timeout is used as the timeout
 // for requests, in milliseconds.
-func Dial(network string, raddr string, timeout int64) (*Client, error) {
+func Dial(network string, raddr string, timeout time.Duration) (*Client, error) {
 	conn, err := net.Dial(network, raddr)
 	if err != nil {
 		return nil, err
@@ -56,7 +56,7 @@ func Dial(network string, raddr string, timeout int64) (*Client, error) {
 
 // DialTLS acts identically to Dial, except that it dials the connection
 // over TLS using the provided *tls.Config.
-func DialTLS(network, raddr string, timeout int64, config *tls.Config) (*Client, error) {
+func DialTLS(network, raddr string, timeout time.Duration, config *tls.Config) (*Client, error) {
 	conn, err := tls.Dial(network, raddr, config)
 	if err != nil {
 		return nil, err
@@ -70,7 +70,7 @@ func DialTLS(network, raddr string, timeout int64, config *tls.Config) (*Client,
 // before sending an error to the caller. NewClient
 // fails with an error if it cannot ping the server
 // over the connection.
-func NewClient(c net.Conn, timeout int64) (*Client, error) {
+func NewClient(c net.Conn, timeout time.Duration) (*Client, error) {
 	cl := &Client{
 		conn:    c,
 		writing: make(chan *waiter, waiterHWM),
@@ -285,8 +285,8 @@ func (c *Client) writeLoop() {
 // NOTE(pmh): this doesn't actually guarantee
 // de-queing after the given duration;
 // rather, it limits max wait time to 2*msec.
-func (c *Client) timeoutLoop(msec int64) {
-	tick := time.Tick(time.Millisecond * time.Duration(msec))
+func (c *Client) timeoutLoop(d time.Duration) {
+	tick := time.Tick(d)
 	for {
 		select {
 		case <-c.done:

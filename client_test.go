@@ -79,7 +79,7 @@ func BenchmarkTCPEcho(b *testing.B) {
 	mux.Handle("echo", EchoHandler{})
 
 	go Serve(l, mux)
-	cl, err := Dial("tcp", "localhost:7000", 1)
+	cl, err := Dial("tcp", "localhost:7000", 1*time.Millisecond)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func BenchmarkUnixNoop(b *testing.B) {
 		time.Sleep(1 * time.Millisecond)
 	}()
 	go Serve(l, NopHandler{})
-	cl, err := Dial("unix", "bench", 5)
+	cl, err := Dial("unix", "bench", 1*time.Millisecond)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -141,7 +141,7 @@ func BenchmarkPipeNoop(b *testing.B) {
 
 	defer srv.Close()
 
-	cl, err := NewClient(cln, 100)
+	cl, err := NewClient(cln, 1*time.Millisecond)
 	if err != nil {
 		b.Fatal(err)
 	}

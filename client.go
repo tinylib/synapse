@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	defaultTimeout = 3000 // three seconds
+	defaultTimeout = 3 * time.Second // three seconds
 
 	// waiter "high water mark"
 	// TODO(maybe): make this adjustable.

@@ -5,7 +5,7 @@ Synapse
 
 Synapse is:
  
- - An RPC wire protocol base on [MessagePack](http://msgpack.org)
+ - An RPC wire protocol based on [MessagePack](http://msgpack.org)
  - A library implementation of that protocol in go
 
 This library was designed to work with [tinylib/msgp](http://github.com/tinylib/msgp) for serialization.
@@ -38,8 +38,7 @@ like HTTP and (some) RPC protocols. Like `net/rpc`, synapse can operate over mos
 As an added bonus, synapse has a much smaller per-request and per-connection memory footprint than `net/rpc` or 
 `net/http`.
 
-This repository contains only the "core" of the Synapse project. Over time, we will release middlewares  
-in other repositories, but our intention is to keep the core as small as possible.
+This repository contains only the "core" of the Synapse project. Over time, we will release middlewares in other repositories, but our intention is to keep the core as small as possible.
 
 #### Non-goals
 
@@ -125,7 +124,7 @@ details that influence performance:
 
  - De-coupling of message body serialization/de-serialization from the main read/write loops reduces the 
  amount of time spend in critical (blocking) sections, meaning that time spent blocking is both lower and 
- more consistent. Additionally, malformed handlers cannot corrupt the state of the network i/o loop.
+ more consistent. Additionally, malformed handlers cannot corrupt the state of the network I/O loop.
  However, this hurts performance in the simple (serial) case, because lots of time is spent copying memory
  rather than making forward progress.
  - Opportunistic coalescing of network writes reduces system call overhead, without dramatically affecting latency.

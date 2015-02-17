@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/tinylib/synapse"
 	"os"
+	"time"
 )
 
 //go:generate msgp -io=false
@@ -13,7 +14,7 @@ type Num struct {
 }
 
 func main() {
-	cl, err := synapse.Dial("tcp", "localhost:7000", 1000)
+	cl, err := synapse.Dial("tcp", "localhost:7000", time.Second)
 	if err != nil {
 		fmt.Println(err)
 		return

@@ -32,7 +32,7 @@ func (f handlerFunc) ServeCall(req Request, res ResponseWriter) { f(req, res) }
 func (r *Router) ServeCall(req Request, res ResponseWriter) {
 	h, ok := r.hlrs[req.Name()]
 	if !ok {
-		res.Error(NotFound)
+		res.Error(StatusNotFound, "no handler by that name")
 		return
 	}
 	h.ServeCall(req, res)

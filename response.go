@@ -14,9 +14,10 @@ const outPrealloc = 256
 // to either method should no-op.
 type ResponseWriter interface {
 	// Error sets an error status
-	// to be returned to the caller
-	// instead of a full body.
-	Error(Status)
+	// to be returned to the caller,
+	// along with an explanation
+	// of the error.
+	Error(Status, string)
 
 	// Send sets the body to be
 	// returned to the caller.
@@ -41,13 +42,14 @@ func (r *response) resetLead() {
 }
 
 // base Error implementation
-func (r *response) Error(s Status) {
+func (r *response) Error(s Status, expl string) {
 	if r.wrote {
 		return
 	}
 	r.wrote = true
 	r.resetLead()
 	r.out = msgp.AppendInt(r.out, int(s))
+	r.out = msgp.AppendString(r.out, expl)
 }
 
 // base Send implementation

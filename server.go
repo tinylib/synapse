@@ -293,7 +293,7 @@ func (c *connHandler) handleReq(cw *connWrapper) {
 	// split request into 'name' and body
 	cw.req.name, cw.req.in, err = msgp.ReadStringBytes(cw.in)
 	if err != nil {
-		cw.res.Error(BadRequest)
+		cw.res.Error(StatusBadRequest, "malformed request method")
 	} else {
 		c.h.ServeCall(&cw.req, &cw.res)
 		// if the handler didn't write a body,

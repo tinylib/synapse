@@ -112,7 +112,7 @@ func (m *mockRes) Send(g msgp.Marshaler) error {
 	if err != nil {
 		return err
 	}
-	m.status = okStatus
+	m.status = StatusOK
 	return nil
 }
 

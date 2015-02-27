@@ -71,7 +71,6 @@ func DialTLS(network, raddr string, timeout time.Duration, config *tls.Config) (
 func NewClient(c net.Conn, timeout time.Duration) (*Client, error) {
 	cl := &Client{
 		conn:    c,
-		bwr:     fwd.NewWriter(c),
 		writing: make(chan *waiter, waiterHWM),
 		done:    make(chan struct{}),
 		state:   clientOpen,
@@ -95,7 +94,6 @@ func NewClient(c net.Conn, timeout time.Duration) (*Client, error) {
 // a single synapse server.
 type Client struct {
 	conn    net.Conn       // connection
-	bwr     *fwd.Writer    // wraps conn
 	wlock   sync.Mutex     // write lock
 	csn     uint64         // sequence number; atomic
 	writing chan *waiter   // queue to write to conn; size is effectively HWM
@@ -365,7 +363,7 @@ func (w *waiter) read(out msgp.Unmarshaler) error {
 	if err != nil {
 		return err
 	}
-	if Status(code) != okStatus {
+	if Status(code) != StatusOK {
 		str, _, err := msgp.ReadStringBytes(w.in)
 		if err != nil {
 			str = "<?>"

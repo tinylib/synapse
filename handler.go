@@ -30,7 +30,7 @@ type Status int
 // client.
 const (
 	StatusInvalid     Status = iota // zero-value for Status
-	okStatus                        // not an error; not exported
+	StatusOK                        // OK
 	StatusNotFound                  // no handler for the request method
 	StatusCondition                 // precondition failure
 	StatusBadRequest                // mal-formed request
@@ -56,8 +56,8 @@ func (e *ResponseError) Error() string {
 // String returns the string representation of the status
 func (s Status) String() string {
 	switch s {
-	case okStatus:
-		return "<ok>"
+	case StatusOK:
+		return "OK"
 	case StatusNotFound:
 		return "not found"
 	case StatusCondition:

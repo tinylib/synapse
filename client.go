@@ -14,8 +14,6 @@ import (
 )
 
 const (
-	defaultTimeout = 3 * time.Second // three seconds
-
 	// waiter "high water mark"
 	// TODO(maybe): make this adjustable.
 	waiterHWM = 32
@@ -79,11 +77,6 @@ func NewClient(c net.Conn, timeout time.Duration) (*Client, error) {
 	}
 	go cl.readLoop()
 	go cl.writeLoop()
-
-	if timeout <= 0 {
-		timeout = defaultTimeout
-	}
-
 	go cl.timeoutLoop(timeout)
 
 	// do a ping to check
@@ -101,6 +94,7 @@ func NewClient(c net.Conn, timeout time.Duration) (*Client, error) {
 // a single synapse server.
 type Client struct {
 	conn    net.Conn       // connection
+	wlock   sync.Mutex     // write lock
 	csn     uint64         // sequence number; atomic
 	writing chan *waiter   // queue to write to conn; size is effectively HWM
 	done    chan struct{}  // closed during (*Client).Close to shut down timeoutloop
@@ -233,31 +227,39 @@ func (c *Client) readLoop() {
 	}
 }
 
+// once every 'msec' milliseconds, reap
+// every pending item with reap=true, and
+// set all others to reap=true.
+//
+// NOTE(pmh): this doesn't actually guarantee
+// de-queing after the given duration;
+// rather, it limits max wait time to 2*msec.
+func (c *Client) timeoutLoop(d time.Duration) {
+	tick := time.Tick(d)
+	for {
+		select {
+		case <-c.done:
+			return
+		case <-tick:
+			c.pending.reap()
+		}
+	}
+}
+
 func (c *Client) writeLoop() {
 	bwr := fwd.NewWriterSize(c.conn, 4096)
 
-	// the idea here is to
-	// take advantage of buffering
-	// small writes, but without
-	// having to periodically
-	// flush the buffer from
-	// a separate goroutine.
-	// instead, we write from
-	// the queue as many times
-	// as we can without blocking,
-	// and then flush.
 	for {
-		// wait for one write
 		wt, ok := <-c.writing
 		if !ok {
+			// this is the "normal"
+			// exit point for this
+			// goroutine.
 			return
 		}
-		// write it
 		if !c.do(bwr.Write(wt.in)) {
 			return
 		}
-		// try to match this write
-		// with other writes
 	more:
 		select {
 		case another, ok := <-c.writing:
@@ -274,25 +276,6 @@ func (c *Client) writeLoop() {
 			if !c.do(0, bwr.Flush()) {
 				return
 			}
-		}
-	}
-}
-
-// once every 'msec' milliseconds, reap
-// every pending item with reap=true, and
-// set all others to reap=true.
-//
-// NOTE(pmh): this doesn't actually guarantee
-// de-queing after the given duration;
-// rather, it limits max wait time to 2*msec.
-func (c *Client) timeoutLoop(d time.Duration) {
-	tick := time.Tick(d)
-	for {
-		select {
-		case <-c.done:
-			return
-		case <-tick:
-			c.pending.reap()
 		}
 	}
 }
@@ -322,13 +305,16 @@ func (w *waiter) writeCommand(cmd command, msg []byte) error {
 	w.in[leadSize] = byte(cmd)
 	copy(w.in[leadSize+1:], msg)
 
-	w.reap = false
-	w.seq = seqn
+	w.writebody(seqn)
+	return nil
+}
 
+func (w *waiter) writebody(seq uint64) {
+	w.seq = seq
+	w.reap = false
 	p := w.parent
 	p.pending.insert(w)
 	p.writing <- w
-	return nil
 }
 
 func (w *waiter) write(method string, in msgp.Marshaler) error {
@@ -367,12 +353,8 @@ func (w *waiter) write(method string, in msgp.Marshaler) error {
 	}
 
 	putFrame(w.in, sn, fREQ, olen)
-	w.reap = false
-	w.seq = sn
 
-	p := w.parent
-	p.pending.insert(w)
-	p.writing <- w
+	w.writebody(sn)
 	return nil
 }
 
@@ -381,8 +363,12 @@ func (w *waiter) read(out msgp.Unmarshaler) error {
 	if err != nil {
 		return err
 	}
-	if Status(code) != okStatus {
-		return Status(code)
+	if Status(code) != StatusOK {
+		str, _, err := msgp.ReadStringBytes(w.in)
+		if err != nil {
+			str = "<?>"
+		}
+		return &ResponseError{Code: Status(code), Expl: str}
 	}
 	if out != nil {
 		_, err = out.UnmarshalMsg(body)

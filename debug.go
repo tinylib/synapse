@@ -59,7 +59,7 @@ func (d *debugh) ServeCall(req Request, res ResponseWriter) {
 	err := req.Decode(&raw)
 	if err != nil {
 		d.logger.Printf("request from %s for %q is malformed: %s\n", remote, nm, err)
-		res.Error(BadRequest)
+		res.Error(StatusBadRequest, err.Error())
 		return
 	}
 	msgp.UnmarshalAsJSON(&buf, []byte(raw))
@@ -74,7 +74,7 @@ func (d *debugh) ServeCall(req Request, res ResponseWriter) {
 	d.inner.ServeCall(r, w)
 	if !w.wrote {
 		d.logger.Print("WARNING: handler for", nm, "did not write a valid response")
-		res.Error(ServerError)
+		res.Error(StatusServerError, "empty response")
 		return
 	}
 	msgp.UnmarshalAsJSON(&buf, []byte(w.out))
@@ -112,16 +112,17 @@ func (m *mockRes) Send(g msgp.Marshaler) error {
 	if err != nil {
 		return err
 	}
-	m.status = okStatus
+	m.status = StatusOK
 	return nil
 }
 
-func (m *mockRes) Error(s Status) {
+func (m *mockRes) Error(s Status, r string) {
 	if m.wrote {
 		return
 	}
 	m.wrote = true
 	m.status = s
+	m.out = msgp.AppendString(m.out, r)
 }
 
 func (d *debugh) serveBase(req *request, res *response) {
@@ -130,7 +131,7 @@ func (d *debugh) serveBase(req *request, res *response) {
 	remote := req.addr.String()
 	if err != nil {
 		d.logger.Printf("request from %s for %q was malformed: %s", remote, req.name, err)
-		res.Error(BadRequest)
+		res.Error(StatusBadRequest, err.Error())
 		return
 	}
 	d.logger.Printf("request from %s:\n\tNAME: %q\n\tBODY: %s\n", remote, req.name, buf.String())
@@ -138,7 +139,7 @@ func (d *debugh) serveBase(req *request, res *response) {
 	d.inner.ServeCall(req, res)
 	if !res.wrote || len(res.out) < leadSize {
 		d.logger.Print("WARNING: handler for", req.name, "did not write a valid response")
-		res.Error(ServerError)
+		res.Error(StatusServerError, "empty response")
 		return
 	}
 	out := res.out[leadSize:]
@@ -155,5 +156,5 @@ func (d *debugh) serveBase(req *request, res *response) {
 		d.logger.Printf("response for %s is malformed: %s", req.name, err)
 		return
 	}
-	d.logger.Printf("response to %s for %q:\n\tSTATUS: %s\n\tBODY: %s\n", remote, req.name, status.Error(), buf.String())
+	d.logger.Printf("response to %s for %q:\n\tSTATUS: %s\n\tBODY: %s\n", remote, req.name, status, buf.String())
 }

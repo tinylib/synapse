@@ -8,6 +8,13 @@ import (
 	"time"
 )
 
+func isCode(err error, c Status) bool {
+	if reserr, ok := err.(*ResponseError); ok && reserr.Code == c {
+		return true
+	}
+	return false
+}
+
 // open up a client and server; make
 // some concurrent requests
 func TestClient(t *testing.T) {
@@ -35,8 +42,8 @@ func TestClient(t *testing.T) {
 
 	// test for NotFound
 	err := tcpClient.Call("doesn't-exist", nil, nil)
-	if err != NotFound {
-		t.Errorf("expected error %v; got %v", NotFound, err)
+	if !isCode(err, StatusNotFound) {
+		t.Errorf("expected not-found error; got %#v", err)
 	}
 }
 
@@ -79,7 +86,7 @@ func BenchmarkTCPEcho(b *testing.B) {
 	mux.Handle("echo", EchoHandler{})
 
 	go Serve(l, mux)
-	cl, err := Dial("tcp", "localhost:7000", 1*time.Millisecond)
+	cl, err := Dial("tcp", "localhost:7000", 50*time.Millisecond)
 	if err != nil {
 		b.Fatal(err)
 	}

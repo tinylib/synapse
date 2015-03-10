@@ -1,5 +1,9 @@
 package synapse
 
+import (
+	"fmt"
+)
+
 // Handler is the interface used
 // to register server response callbacks.
 type Handler interface {
@@ -25,50 +29,48 @@ type Status int
 // an error to send to the
 // client.
 const (
-	// InvalidStatus is the
-	// zero value of Status.
-	InvalidStatus Status = iota
-
-	// un-exported, because 'ok'
-	// is not really an error
-	okStatus
-
-	// NotFound means the
-	// call requested could
-	// not be located on the
-	// server
-	NotFound
-
-	// BadRequest means the
-	// request was not formatted
-	// as expected
-	BadRequest
-
-	// NotAuthed means the client
-	// was not authorized to make
-	// the call
-	NotAuthed
-
-	// ServerError means the server
-	// encountered an error when
-	// making the call
-	ServerError
+	StatusInvalid     Status = iota // zero-value for Status
+	StatusOK                        // OK
+	StatusNotFound                  // no handler for the request method
+	StatusCondition                 // precondition failure
+	StatusBadRequest                // mal-formed request
+	StatusNotAuthed                 // not authorized
+	StatusServerError               // server-side error
+	StatusOther                     // other error
 )
 
-// Status implements the error interface
-func (s Status) Error() string {
+// ResponseError is the type of error
+// returned by the client when the
+// server sends a response with
+// ResponseWriter.Error()
+type ResponseError struct {
+	Code Status
+	Expl string
+}
+
+// Error implements error
+func (e *ResponseError) Error() string {
+	return fmt.Sprintf("synapse: response error (%s): %s", e.Code, e.Expl)
+}
+
+// String returns the string representation of the status
+func (s Status) String() string {
 	switch s {
-	case okStatus:
-		return "<ok>"
-	case NotFound:
+	case StatusOK:
+		return "OK"
+	case StatusNotFound:
 		return "not found"
-	case BadRequest:
+	case StatusCondition:
+		return "precondition failed"
+	case StatusBadRequest:
 		return "bad request"
-	case NotAuthed:
+	case StatusNotAuthed:
 		return "not authorized"
-	case ServerError:
+	case StatusServerError:
 		return "server error"
+	case StatusOther:
+		return "other"
 	default:
-		return "<invalid status>"
+		return fmt.Sprintf("Status(%d)", s)
 	}
 }

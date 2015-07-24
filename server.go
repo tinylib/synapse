@@ -291,7 +291,7 @@ func (c *connHandler) handleReq(cw *connWrapper) {
 	var err error
 
 	// split request into 'name' and body
-	cw.req.name, cw.req.in, err = msgp.ReadStringBytes(cw.in)
+	cw.req.mtd, cw.req.in, err = msgp.ReadUint32Bytes(cw.in)
 	if err != nil {
 		cw.res.Error(StatusBadRequest, "malformed request method")
 	} else {

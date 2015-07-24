@@ -27,7 +27,7 @@ func TestClient(t *testing.T) {
 		go func() {
 			instr := testData("hello, world!")
 			var outstr testData
-			err := tcpClient.Call("echo", &instr, &outstr)
+			err := tcpClient.Call(Echo, &instr, &outstr)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -41,7 +41,7 @@ func TestClient(t *testing.T) {
 	wg.Wait()
 
 	// test for NotFound
-	err := tcpClient.Call("doesn't-exist", nil, nil)
+	err := tcpClient.Call(100, nil, nil)
 	if !isCode(err, StatusNotFound) {
 		t.Errorf("expected not-found error; got %#v", err)
 	}
@@ -50,11 +50,9 @@ func TestClient(t *testing.T) {
 // the output of the debug handler
 // is only visible if '-v' is set
 func TestDebugClient(t *testing.T) {
-	attachDebug("debug_echo", t)
-
 	instr := String("here's a message body!")
 	var outstr String
-	err := tcpClient.Call("debug_echo", &instr, &outstr)
+	err := tcpClient.Call(DebugEcho, &instr, &outstr)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +64,7 @@ func TestDebugClient(t *testing.T) {
 // test that 'nil' is a safe
 // argument to requests and responses
 func TestNop(t *testing.T) {
-	err := tcpClient.Call("nop", nil, nil)
+	err := tcpClient.Call(Nop, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,10 +80,8 @@ func BenchmarkTCPEcho(b *testing.B) {
 		l.Close()
 		time.Sleep(1 * time.Millisecond)
 	}()
-	mux := NewRouter()
-	mux.Handle("echo", EchoHandler{})
 
-	go Serve(l, mux)
+	go Serve(l, EchoHandler{})
 	cl, err := Dial("tcp", "localhost:7000", 50*time.Millisecond)
 	if err != nil {
 		b.Fatal(err)
@@ -99,7 +95,7 @@ func BenchmarkTCPEcho(b *testing.B) {
 		instr := testData("hello, world!")
 		var outstr testData
 		for pb.Next() {
-			err := cl.Call("echo", &instr, &outstr)
+			err := cl.Call(Echo, &instr, &outstr)
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -132,7 +128,7 @@ func BenchmarkUnixNoop(b *testing.B) {
 	b.SetParallelism(20)
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			err := cl.Call("any", nil, nil)
+			err := cl.Call(Echo, nil, nil)
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -160,7 +156,7 @@ func BenchmarkPipeNoop(b *testing.B) {
 	b.SetParallelism(20)
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			err := cl.Call("any", nil, nil)
+			err := cl.Call(0, nil, nil)
 			if err != nil {
 				b.Fatal(err)
 			}

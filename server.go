@@ -31,13 +31,21 @@ const (
 // Serve starts a Server on 'l' that serves
 // the supplied handler. It blocks until the
 // listener closes.
-func Serve(l net.Listener, h Handler) error {
+func Serve(l net.Listener, service string, h Handler) error {
+	a := l.Addr()
+	s := Service{
+		name: service,
+		net:  a.Network(),
+		addr: a.String(),
+	}
+	cache(&s)
 	for {
 		c, err := l.Accept()
 		if err != nil {
+			uncache(&s)
 			return err
 		}
-		go ServeConn(c, h)
+		go ServeConn(c, service, h)
 	}
 }
 
@@ -47,7 +55,7 @@ func Serve(l net.Listener, h Handler) error {
 // Server must be provided. If the certificate is signed by a
 // certificate authority, the certFile should be the concatenation of
 // the server's certificate followed by the CA's certificate.
-func ListenAndServeTLS(network, laddr string, certFile, keyFile string, h Handler) error {
+func ListenAndServeTLS(network, laddr, service, certFile, keyFile string, h Handler) error {
 	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
 	if err != nil {
 		return err
@@ -59,7 +67,7 @@ func ListenAndServeTLS(network, laddr string, certFile, keyFile string, h Handle
 	if err != nil {
 		return err
 	}
-	return Serve(l, h)
+	return Serve(l, service, h)
 }
 
 // ListenAndServe opens up a network listener
@@ -67,19 +75,20 @@ func ListenAndServeTLS(network, laddr string, certFile, keyFile string, h Handle
 // and begins serving with the provided handler.
 // ListenAndServe blocks until there is a fatal
 // listener error.
-func ListenAndServe(network string, laddr string, h Handler) error {
+func ListenAndServe(network, laddr, service string, h Handler) error {
 	l, err := net.Listen(network, laddr)
 	if err != nil {
 		return err
 	}
-	return Serve(l, h)
+	return Serve(l, service, h)
 }
 
 // ServeConn serves an individual network
 // connection. It blocks until the connection
 // is closed or it encounters a fatal error.
-func ServeConn(c net.Conn, h Handler) {
+func ServeConn(c net.Conn, service string, h Handler) {
 	ch := connHandler{
+		svcname: []byte(service),
 		conn:    c,
 		h:       h,
 		remote:  c.RemoteAddr(),
@@ -120,6 +129,7 @@ func putFrame(bts []byte, seq uint64, ft fType, sz int) {
 // connections and multiplexes requests
 // to connWrappers
 type connHandler struct {
+	svcname []byte
 	h       Handler
 	conn    net.Conn
 	remote  net.Addr

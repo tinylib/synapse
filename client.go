@@ -87,6 +87,8 @@ func NewClient(c net.Conn, timeout time.Duration) (*Client, error) {
 		cl.Close()
 		return nil, fmt.Errorf("synapse: ping failed: %s", err)
 	}
+	// sync links asap
+	go cl.syncLinks()
 
 	return cl, nil
 }
@@ -94,6 +96,7 @@ func NewClient(c net.Conn, timeout time.Duration) (*Client, error) {
 // Client is a client to
 // a single synapse server.
 type Client struct {
+	svc     string
 	conn    net.Conn       // connection
 	wlock   sync.Mutex     // write lock
 	csn     uint64         // sequence number; atomic
@@ -102,6 +105,10 @@ type Client struct {
 	wg      sync.WaitGroup // outstanding client procs
 	state   uint32         // open, closed, etc.
 	pending wMap           // map seq number to waiting handler
+}
+
+func (c *Client) Service() string {
+	return c.svc
 }
 
 // used to transfer control
@@ -454,4 +461,9 @@ func (c *Client) sendCommand(cmd command, msg []byte) error {
 // didn't respond appropriately
 func (c *Client) ping() error {
 	return c.sendCommand(cmdPing, nil)
+}
+
+// sync known service addresses
+func (c *Client) syncLinks() {
+	c.sendCommand(cmdListLinks, svclistbytes())
 }

@@ -15,6 +15,36 @@ func isCode(err error, c Status) bool {
 	return false
 }
 
+func TestClientServiceName(t *testing.T) {
+	if tcpClient.Service() != "test-endpoint" {
+		t.Errorf("expected service endpoint to be %q, but got %q", "test-endpoint", tcpClient.Service())
+	}
+	if unxClient.Service() != "test-endpoint" {
+		t.Errorf("expected service endpoint to be %q, but got %q", "test-endpoint", unxClient.Service())
+	}
+}
+
+func TestNearest(t *testing.T) {
+	svc := Nearest("test-endpoint")
+	if svc == nil {
+		t.Error("expected Nearest(test-endpoint) to return something")
+	} else {
+		c, err := svc.Connect(5 * time.Millisecond)
+		if err != nil {
+			t.Errorf("couldn't connect to tcp service: %s", err)
+		}
+		c.Close()
+	}
+
+	all := Services("test-endpoint")
+	if len(all) != 2 {
+		for _, s := range all {
+			t.Logf("service: %#v", *s)
+		}
+		t.Errorf("expected Services(test-endpoint) to return 2 elements; found %d", len(all))
+	}
+}
+
 // open up a client and server; make
 // some concurrent requests
 func TestClient(t *testing.T) {
@@ -81,7 +111,7 @@ func BenchmarkTCPEcho(b *testing.B) {
 		time.Sleep(1 * time.Millisecond)
 	}()
 
-	go Serve(l, EchoHandler{})
+	go Serve(l, "bench-endpoint", EchoHandler{})
 	cl, err := Dial("tcp", "localhost:7000", 50*time.Millisecond)
 	if err != nil {
 		b.Fatal(err)
@@ -116,8 +146,9 @@ func BenchmarkUnixNoop(b *testing.B) {
 		l.Close()
 		time.Sleep(1 * time.Millisecond)
 	}()
-	go Serve(l, NopHandler{})
-	cl, err := Dial("unix", "bench", 50*time.Millisecond)
+
+	go Serve(l, "bench-endpoint", NopHandler{})
+	cl, err := Dial("unix", "bench", 1*time.Millisecond)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -140,7 +171,7 @@ func BenchmarkUnixNoop(b *testing.B) {
 func BenchmarkPipeNoop(b *testing.B) {
 	srv, cln := net.Pipe()
 
-	go ServeConn(srv, NopHandler{})
+	go ServeConn(srv, "pipe", NopHandler{})
 
 	defer srv.Close()
 

@@ -41,7 +41,8 @@ type command uint8
 // cmdDirectory is a map of all the commands
 // to their respective actions
 var cmdDirectory = [_maxcommand]action{
-	cmdPing: ping{},
+	cmdPing:      ping{},
+	cmdListLinks: links{},
 }
 
 // an action is the consequence
@@ -72,6 +73,8 @@ const (
 	// command
 	cmdPing
 
+	cmdListLinks
+
 	// a command >= _maxcommand
 	// is invalid
 	_maxcommand
@@ -80,6 +83,49 @@ const (
 // ping is a no-op on both sides
 type ping struct{}
 
-func (p ping) Client(cl *Client, res []byte) {}
+func (p ping) Client(cl *Client, res []byte) {
+	name := string(res)
+	r := cl.conn.RemoteAddr()
+	s := Service{
+		name: name,
+		net:  r.Network(),
+		addr: r.String(),
+	}
+	cache(&s)
+	cl.svc = name
+}
 
-func (p ping) Server(ch *connHandler, body []byte) ([]byte, error) { return nil, nil }
+func (p ping) Server(ch *connHandler, body []byte) ([]byte, error) {
+	return ch.svcname, nil
+}
+
+type links struct{}
+
+func (l links) Client(cl *Client, res []byte) {
+	var sl serviceList
+	_, err := sl.UnmarshalMsg(res)
+	if err != nil {
+		return
+	}
+	cachelist(sl)
+}
+
+func (l links) Server(ch *connHandler, body []byte) ([]byte, error) {
+	var sl serviceList
+	_, err := sl.UnmarshalMsg(body)
+	if err != nil {
+		return nil, err
+	}
+	svcCache.Lock()
+	body, _ = svcCache.tab.MarshalMsg(body[:0])
+	for _, sv := range sl {
+		// servers are responsibles
+		// for incrementing the distance
+		// counter when they receive an
+		// endpoint.
+		sv.distance++
+		svcCache.tab[sv.name] = addSvc(svcCache.tab[sv.name], sv)
+	}
+	svcCache.Unlock()
+	return body, nil
+}

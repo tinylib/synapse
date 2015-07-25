@@ -97,14 +97,14 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 
-	go Serve(l, rt)
+	go Serve(l, "test-endpoint", rt)
 
 	ul, err := net.Listen("unix", "synapse")
 	if err != nil {
 		panic(err)
 	}
 
-	go Serve(ul, rt)
+	go Serve(ul, "test-endpoint", rt)
 
 	tcpClient, err = Dial("tcp", ":7070", 5*time.Millisecond)
 	if err != nil {

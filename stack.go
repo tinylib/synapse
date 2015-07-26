@@ -33,11 +33,9 @@ var (
 func init() {
 	// set up the pointers and lock
 	// the waiter semaphores
-	waiterSlab[0].done.Lock()
 	waiterSlab[0].static = true
 	for i := 0; i < (arenaSize - 1); i++ {
 		waiterSlab[i].next = &waiterSlab[i+1]
-		waiterSlab[i+1].done.Lock()
 		waiterSlab[i+1].static = true
 		wrapperSlab[i].next = &wrapperSlab[i+1]
 	}
@@ -94,7 +92,6 @@ func (s *waitStack) pop(c *Client) (ptr *waiter) {
 	spin.Unlock(&s.lock)
 	ptr = &waiter{}
 	ptr.parent = c
-	ptr.done.Lock()
 	return
 }
 

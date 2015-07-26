@@ -11,6 +11,7 @@ import (
 
 	"github.com/philhofer/fwd"
 	"github.com/tinylib/msgp/msgp"
+	"github.com/tinylib/synapse/sema"
 )
 
 const (
@@ -109,7 +110,7 @@ type waiter struct {
 	next   *waiter    // next in linked list, or nil
 	parent *Client    // parent *client
 	seq    uint64     // sequence number
-	done   sync.Mutex // for notifying response; locked is default
+	done   sema.Point // for notifying response
 	err    error      // response error on wakeup, if applicable
 	in     []byte     // response body
 	reap   bool       // can reap for timeout
@@ -223,7 +224,7 @@ func (c *Client) readLoop() {
 		// error from last
 		// read call (usually nil)
 		w.err = nil
-		w.done.Unlock()
+		sema.Wake(&w.done)
 	}
 }
 
@@ -383,7 +384,7 @@ func (w *waiter) call(method Method, in msgp.Marshaler, out msgp.Unmarshaler) er
 		return err
 	}
 	// wait for response
-	w.done.Lock()
+	sema.Wait(&w.done)
 	w.parent.wg.Done()
 	if w.err != nil {
 		return w.err
@@ -418,7 +419,7 @@ func (c *Client) sendCommand(cmd command, msg []byte) error {
 	}
 
 	// wait
-	w.done.Lock()
+	sema.Wait(&w.done)
 	c.wg.Done()
 	if w.err != nil {
 		return w.err

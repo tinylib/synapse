@@ -2,6 +2,8 @@ package synapse
 
 import (
 	"sync"
+
+	"github.com/tinylib/synapse/sema"
 )
 
 const (
@@ -88,7 +90,7 @@ func (n *mNode) reap() {
 			}
 			*fwd, cur.next = cur.next, nil
 			cur.err = ErrTimeout
-			cur.done.Unlock()
+			sema.Wake(&cur.done)
 			cur = *fwd
 		} else {
 			cur.reap = true
@@ -105,7 +107,7 @@ func (n *mNode) flush(err error) {
 	for l := n.list; l != nil; {
 		next, l.next = l.next, nil
 		l.err = err
-		l.done.Unlock()
+		sema.Wake(&l.done)
 		l = next
 	}
 	n.list = nil

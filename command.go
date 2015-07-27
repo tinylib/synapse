@@ -110,42 +110,45 @@ func pinghandle(ch *connHandler, body []byte) ([]byte, error) {
 }
 
 func recvlinks(cl *Client, res []byte) {
-	var sl serviceList
+	sl := serviceTable{}
 	_, err := sl.UnmarshalMsg(res)
 	if err != nil {
 		return
 	}
 	svcCache.Lock()
-	for _, sv := range sl {
-		if sv.host == hostid || !isRoutable(sv) {
-			continue
+	for name, sv := range sl {
+		list := svcCache.tab[name]
+		for _, s := range sv {
+			if s.host == hostid || !isRoutable(s) {
+				continue
+			}
+			list = addSvc(list, s)
 		}
-		svcCache.tab[sv.name] = addSvc(svcCache.tab[sv.name], sv)
+		svcCache.tab[name] = list
 	}
 	svcCache.Unlock()
 }
 
 func sendlinks(ch *connHandler, body []byte) ([]byte, error) {
-	var sl serviceList
+	sl := serviceTable{}
 	_, err := sl.UnmarshalMsg(body)
 	if err != nil {
 		return nil, err
 	}
-	if ch.route != routeOSLocal {
-		// for each non-os-local
-		// service, increment the
-		// hop counter
-		for _, sv := range sl {
-			sv.dist++
-		}
-	}
 	svcCache.Lock()
 	body, _ = svcCache.tab.MarshalMsg(body[:0])
-	for _, sv := range sl {
-		if sv.host == hostid {
-			continue
+	for name, sv := range sl {
+		list := svcCache.tab[name]
+		for _, s := range sv {
+			if s.host == hostid {
+				continue
+			}
+			if ch.route != routeOSLocal {
+				s.dist++
+			}
+			list = addSvc(list, s)
 		}
-		svcCache.tab[sv.name] = addSvc(svcCache.tab[sv.name], sv)
+		svcCache.tab[name] = list
 	}
 	svcCache.Unlock()
 	return body, nil

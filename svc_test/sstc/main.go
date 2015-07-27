@@ -1,0 +1,82 @@
+package main
+
+import (
+	"flag"
+	"fmt"
+	"os"
+	"time"
+
+	"github.com/tinylib/synapse"
+)
+
+var (
+	port = flag.String("port", ":7000", "tcp port to dial")
+)
+
+func fatalln(str string) {
+	fmt.Println(str)
+	os.Exit(1)
+}
+
+func perror(str string, err error) {
+	fmt.Println(str, err)
+	os.Exit(1)
+}
+
+func dumpservices(srv string) {
+	fmt.Print("Known addresses for service", srv)
+	sv := synapse.Services(srv)
+	if len(sv) == 0 {
+		fmt.Print(": None.\n")
+		return
+	}
+	fmt.Print("\n")
+	for _, s := range sv {
+		fmt.Println("\t", s)
+	}
+}
+
+func main() {
+	cl, err := synapse.Dial("tcp", *port, 25*time.Millisecond)
+	if err != nil {
+		perror("dial failure:", err)
+	}
+	fmt.Println("Connected to service", cl.Service())
+
+	err = cl.Call("echo", synapse.String("hello!"), nil)
+	if err != nil {
+		perror("call error:", err)
+	}
+
+	// wait for service lists to synchronize
+	time.Sleep(50 * time.Millisecond)
+
+	dumpservices(cl.Service())
+
+	ss := synapse.Nearest(cl.Service())
+	if ss == nil {
+		fatalln("Nearest() returned nil")
+	}
+
+	nwk, sock := ss.Addr()
+	if nwk != "unix" {
+		fatalln("Nearest(service).Addr() didn't return a unix socket")
+	}
+
+	fmt.Println("Found socket", sock)
+	var cl2 *synapse.Client
+
+	cl2, err = synapse.Dial(nwk, sock, 25*time.Millisecond)
+	if err != nil {
+		perror("couldn't dial socket:", err)
+	}
+	err = cl2.Close()
+	if err != nil {
+		perror("close error:", err)
+	}
+
+	err = cl.Close()
+	if err != nil {
+		perror("close error:", err)
+	}
+}

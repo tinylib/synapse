@@ -28,20 +28,20 @@ func TestNearest(t *testing.T) {
 	svc := Nearest("test-endpoint")
 	if svc == nil {
 		t.Error("expected Nearest(test-endpoint) to return something")
-	} else {
-		c, err := svc.Connect(5 * time.Millisecond)
-		if err != nil {
-			t.Errorf("couldn't connect to tcp service: %s", err)
-		}
-		c.Close()
 	}
 
 	all := Services("test-endpoint")
-	if len(all) != 2 {
-		for _, s := range all {
-			t.Logf("service: %#v", *s)
+	for _, s := range all {
+		t.Logf("found service: %v", s)
+		if s.Name() != "test-endpoint" {
+			t.Errorf("expected name %q -- got %q", "test-endpoint", s.Name())
 		}
-		t.Errorf("expected Services(test-endpoint) to return 2 elements; found %d", len(all))
+		if s.HostID() != hostid {
+			t.Errorf("expected host id %d; got %d", hostid, s.HostID())
+		}
+	}
+	if len(all) < 2 {
+		t.Errorf("expected at least 2 services; found %d", len(all))
 	}
 }
 

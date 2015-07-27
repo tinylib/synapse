@@ -38,27 +38,31 @@ const (
 // to the other
 type command uint8
 
-// cmdDirectory is a map of all the commands
-// to their respective actions
-var cmdDirectory = [_maxcommand]action{
-	cmdPing:      ping{},
-	cmdListLinks: links{},
+// Global directory of command handlers.
+//
+// If you need to implement a new command,
+// add it here.
+var cmdDirectory = [_maxcommand]cmdact{
+	cmdInvalid:   {badhandle, recvbad},
+	cmdPing:      {pinghandle, recvping},
+	cmdListLinks: {sendlinks, recvlinks},
 }
 
-// an action is the consequence
-// of a command - commands are
-// mapped to actions
-type action interface {
-	// Client is the action carried out on the client side
-	// when it receives a command response from a server
-	Client(c *Client, msg []byte)
+type cmdact struct {
+	// handle is called by the server when
+	// receiving a particular command
+	handle func(ch *connHandler, msg []byte) ([]byte, error)
 
-	// Sever is the action carried out on the server side. It
-	// should return the reponse message (if any), and any
-	// error encountered. Errors will result in cmdInvalid
-	// sent to the client.
-	Server(ch *connHandler, msg []byte) (res []byte, err error)
+	// done is called as the client-side finalizer
+	done func(c *Client, msg []byte)
 }
+
+// no-op handlers
+func badhandle(ch *connHandler, msg []byte) ([]byte, error) {
+	return []byte{byte(cmdInvalid)}, nil
+}
+
+func recvbad(c *Client, msg []byte) {}
 
 // list of commands
 const (
@@ -80,50 +84,65 @@ const (
 	_maxcommand
 )
 
-// ping is a no-op on both sides
-type ping struct{}
-
-func (p ping) Client(cl *Client, res []byte) {
-	name := string(res)
-	r := cl.conn.RemoteAddr()
-	s := Service{
-		name: name,
-		net:  r.Network(),
-		addr: r.String(),
+// client-side ping finalizer
+func recvping(cl *Client, res []byte) {
+	var s Service
+	_, err := s.UnmarshalMsg(res)
+	if err != nil {
+		return
 	}
+	r := cl.conn.RemoteAddr()
+	s.net = r.Network()
+	s.addr = r.String()
 	cache(&s)
-	cl.svc = name
+	cl.svc = s.name
 }
 
-func (p ping) Server(ch *connHandler, body []byte) ([]byte, error) {
-	return ch.svcname, nil
+// server-side ping handler
+func pinghandle(ch *connHandler, body []byte) ([]byte, error) {
+	s := Service{
+		name: string(ch.svcname),
+		host: hostid,
+	}
+	return s.MarshalMsg(nil)
 }
 
-type links struct{}
-
-func (l links) Client(cl *Client, res []byte) {
+func recvlinks(cl *Client, res []byte) {
 	var sl serviceList
 	_, err := sl.UnmarshalMsg(res)
 	if err != nil {
 		return
 	}
-	cachelist(sl)
+	svcCache.Lock()
+	for _, sv := range sl {
+		if sv.host == hostid || !isRoutable(sv) {
+			continue
+		}
+		svcCache.tab[sv.name] = addSvc(svcCache.tab[sv.name], sv)
+	}
+	svcCache.Unlock()
 }
 
-func (l links) Server(ch *connHandler, body []byte) ([]byte, error) {
+func sendlinks(ch *connHandler, body []byte) ([]byte, error) {
 	var sl serviceList
 	_, err := sl.UnmarshalMsg(body)
 	if err != nil {
 		return nil, err
 	}
+	if ch.route != routeOSLocal {
+		// for each non-os-local
+		// service, increment the
+		// hop counter
+		for _, sv := range sl {
+			sv.dist++
+		}
+	}
 	svcCache.Lock()
 	body, _ = svcCache.tab.MarshalMsg(body[:0])
 	for _, sv := range sl {
-		// servers are responsibles
-		// for incrementing the distance
-		// counter when they receive an
-		// endpoint.
-		sv.distance++
+		if sv.host == hostid {
+			continue
+		}
 		svcCache.tab[sv.name] = addSvc(svcCache.tab[sv.name], sv)
 	}
 	svcCache.Unlock()

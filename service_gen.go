@@ -11,9 +11,12 @@ import (
 // MarshalMsg implements msgp.Marshaler
 func (z *Service) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// map header, size 4
+	// map header, size 5
+	// string "host"
+	o = append(o, 0x85, 0xa4, 0x68, 0x6f, 0x73, 0x74)
+	o = msgp.AppendUint64(o, z.host)
 	// string "name"
-	o = append(o, 0x84, 0xa4, 0x6e, 0x61, 0x6d, 0x65)
+	o = append(o, 0xa4, 0x6e, 0x61, 0x6d, 0x65)
 	o = msgp.AppendString(o, z.name)
 	// string "net"
 	o = append(o, 0xa3, 0x6e, 0x65, 0x74)
@@ -21,9 +24,9 @@ func (z *Service) MarshalMsg(b []byte) (o []byte, err error) {
 	// string "addr"
 	o = append(o, 0xa4, 0x61, 0x64, 0x64, 0x72)
 	o = msgp.AppendString(o, z.addr)
-	// string "distance"
-	o = append(o, 0xa8, 0x64, 0x69, 0x73, 0x74, 0x61, 0x6e, 0x63, 0x65)
-	o = msgp.AppendInt32(o, z.distance)
+	// string "dist"
+	o = append(o, 0xa4, 0x64, 0x69, 0x73, 0x74)
+	o = msgp.AppendInt32(o, z.dist)
 	return
 }
 
@@ -43,6 +46,11 @@ func (z *Service) UnmarshalMsg(bts []byte) (o []byte, err error) {
 			return
 		}
 		switch msgp.UnsafeString(field) {
+		case "host":
+			z.host, bts, err = msgp.ReadUint64Bytes(bts)
+			if err != nil {
+				return
+			}
 		case "name":
 			z.name, bts, err = msgp.ReadStringBytes(bts)
 			if err != nil {
@@ -58,8 +66,8 @@ func (z *Service) UnmarshalMsg(bts []byte) (o []byte, err error) {
 			if err != nil {
 				return
 			}
-		case "distance":
-			z.distance, bts, err = msgp.ReadInt32Bytes(bts)
+		case "dist":
+			z.dist, bts, err = msgp.ReadInt32Bytes(bts)
 			if err != nil {
 				return
 			}
@@ -75,7 +83,7 @@ func (z *Service) UnmarshalMsg(bts []byte) (o []byte, err error) {
 }
 
 func (z *Service) Msgsize() (s int) {
-	s = 1 + 5 + msgp.StringPrefixSize + len(z.name) + 4 + msgp.StringPrefixSize + len(z.net) + 5 + msgp.StringPrefixSize + len(z.addr) + 9 + msgp.Int32Size
+	s = 1 + 5 + msgp.Uint64Size + 5 + msgp.StringPrefixSize + len(z.name) + 4 + msgp.StringPrefixSize + len(z.net) + 5 + msgp.StringPrefixSize + len(z.addr) + 5 + msgp.Int32Size
 	return
 }
 

@@ -442,16 +442,10 @@ func (c *Client) sendCommand(cmd command, msg []byte) error {
 
 	if ret == cmdInvalid || ret >= _maxcommand {
 		waiters.push(w)
-		return errInvalidCmd
-	}
-
-	act := cmdDirectory[ret]
-	if act == nil {
-		waiters.push(w)
 		return errUnknownCmd
 	}
 
-	act.Client(c, w.in[1:])
+	cmdDirectory[ret].done(c, w.in[1:])
 	waiters.push(w)
 	return nil
 }

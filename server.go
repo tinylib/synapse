@@ -37,6 +37,7 @@ func Serve(l net.Listener, service string, h Handler) error {
 		name: service,
 		net:  a.Network(),
 		addr: a.String(),
+		host: hostid,
 	}
 	cache(&s)
 	for {
@@ -88,11 +89,12 @@ func ListenAndServe(network, laddr, service string, h Handler) error {
 // is closed or it encounters a fatal error.
 func ServeConn(c net.Conn, service string, h Handler) {
 	ch := connHandler{
-		svcname: []byte(service),
+		svcname: service,
 		conn:    c,
 		h:       h,
 		remote:  c.RemoteAddr(),
 		writing: make(chan *connWrapper, 32),
+		route:   getRoute(c),
 	}
 	go ch.writeLoop()
 	ch.connLoop()     // returns on connection close
@@ -125,16 +127,54 @@ func putFrame(bts []byte, seq uint64, ft fType, sz int) {
 	bts[10] = byte(usz)
 }
 
+// route is the network pathway
+// assocaited with a particular
+// conneciton (global, link-local,
+// loopback, etc.)
+type route uint16
+
+const (
+	routeUnknown   route = iota
+	routeGlobal          // globally routable
+	routeLinkLocal       // link-local
+	routeOSLocal         // same machine (unix socket / loopback)
+)
+
+func getRoute(c net.Conn) route {
+	raddr := c.RemoteAddr()
+	nwk := raddr.Network()
+	switch nwk {
+	case "unix":
+		return routeOSLocal
+	case "tcp", "tcp4", "tcp6":
+		a, err := net.ResolveIPAddr(nwk, raddr.String())
+		if err != nil {
+			return routeUnknown
+		}
+		if a.IP.IsLoopback() {
+			return routeOSLocal
+		} else if a.IP.IsLinkLocalUnicast() {
+			return routeLinkLocal
+		} else if a.IP.IsGlobalUnicast() {
+			return routeGlobal
+		}
+		fallthrough
+	default:
+		return routeUnknown
+	}
+}
+
 // connHandler handles network
 // connections and multiplexes requests
 // to connWrappers
 type connHandler struct {
-	svcname []byte
+	svcname string
 	h       Handler
 	conn    net.Conn
 	remote  net.Addr
 	wg      sync.WaitGroup    // outstanding handlers
 	writing chan *connWrapper // write queue
+	route   route             // from whence?
 }
 
 func (c *connHandler) writeLoop() error {
@@ -323,15 +363,13 @@ func handleCmd(c *connHandler, seq uint64, cmd command, body []byte) {
 	if cmd == cmdInvalid || cmd >= _maxcommand {
 		return
 	}
-
-	act := cmdDirectory[cmd]
 	resbyte := byte(cmd)
 	var res []byte
 	var err error
-	if act == nil {
+	if cmd == cmdInvalid || cmd >= _maxcommand {
 		resbyte = byte(cmdInvalid)
 	} else {
-		res, err = act.Server(c, body)
+		res, err = cmdDirectory[cmd].handle(c, body)
 		if err != nil {
 			resbyte = byte(cmdInvalid)
 		}

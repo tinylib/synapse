@@ -2,3 +2,9 @@ language: go
 
 go:
   - 1.4
+  - tip
+
+script: 
+  - go install ./...
+  - go test -v
+  - ./svc-test.bash

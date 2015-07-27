@@ -10,7 +10,7 @@ import (
 )
 
 var (
-	port = flag.String("port", ":7000", "tcp port to dial")
+	port = flag.String("port", ":7005", "tcp port to dial")
 )
 
 func fatalln(str string) {
@@ -24,7 +24,7 @@ func perror(str string, err error) {
 }
 
 func dumpservices(srv string) {
-	fmt.Print("Known addresses for service", srv)
+	fmt.Print("Known addresses for service ", srv)
 	sv := synapse.Services(srv)
 	if len(sv) == 0 {
 		fmt.Print(": None.\n")
@@ -39,13 +39,13 @@ func dumpservices(srv string) {
 func main() {
 	cl, err := synapse.Dial("tcp", *port, 25*time.Millisecond)
 	if err != nil {
-		perror("dial failure:", err)
+		perror("client: dial failure:", err)
 	}
-	fmt.Println("Connected to service", cl.Service())
+	fmt.Println("client: connected to service", cl.Service())
 
 	err = cl.Call("echo", synapse.String("hello!"), nil)
 	if err != nil {
-		perror("call error:", err)
+		perror("client: call error:", err)
 	}
 
 	// wait for service lists to synchronize
@@ -55,28 +55,29 @@ func main() {
 
 	ss := synapse.Nearest(cl.Service())
 	if ss == nil {
-		fatalln("Nearest() returned nil")
+		fatalln("client: Nearest() returned nil")
 	}
 
 	nwk, sock := ss.Addr()
 	if nwk != "unix" {
-		fatalln("Nearest(service).Addr() didn't return a unix socket")
+		fatalln("client: Nearest(service).Addr() didn't return a unix socket")
 	}
 
-	fmt.Println("Found socket", sock)
+	fmt.Println("client: found socket", sock)
 	var cl2 *synapse.Client
 
 	cl2, err = synapse.Dial(nwk, sock, 25*time.Millisecond)
 	if err != nil {
-		perror("couldn't dial socket:", err)
+		perror("client: couldn't dial socket:", err)
 	}
 	err = cl2.Close()
 	if err != nil {
-		perror("close error:", err)
+		perror("client: close error:", err)
 	}
 
 	err = cl.Close()
 	if err != nil {
-		perror("close error:", err)
+		perror("client: close error:", err)
 	}
+	fmt.Println("client: exiting successfully")
 }

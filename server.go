@@ -134,10 +134,10 @@ func putFrame(bts []byte, seq uint64, ft fType, sz int) {
 type route uint16
 
 const (
-	routeUnknown   route = iota
-	routeGlobal          // globally routable
-	routeLinkLocal       // link-local
-	routeOSLocal         // same machine (unix socket / loopback)
+	routeUnknown   route = iota // no idea
+	routeGlobal                 // globally routable
+	routeLinkLocal              // link-local
+	routeOSLocal                // same machine (unix socket / loopback)
 )
 
 func getRoute(c net.Conn) route {
@@ -360,9 +360,6 @@ func (c *connHandler) handleReq(cw *connWrapper) {
 }
 
 func handleCmd(c *connHandler, seq uint64, cmd command, body []byte) {
-	if cmd == cmdInvalid || cmd >= _maxcommand {
-		return
-	}
 	resbyte := byte(cmd)
 	var res []byte
 	var err error

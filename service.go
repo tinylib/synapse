@@ -68,9 +68,21 @@ func (s *Service) Addr() (net, addr string) {
 
 type serviceList []*Service
 
-func (s serviceList) Len() int           { return len(s) }
-func (s serviceList) Less(i, j int) bool { return s[i].dist < s[j].dist }
-func (s serviceList) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
+func (s serviceList) Len() int { return len(s) }
+func (s serviceList) Less(i, j int) bool {
+
+	// for os-local addresses, prefer unix sockets
+	// over loopback tcp
+	if s[i].dist == 0 && s[i].dist == s[j].dist {
+		if s[i].net == "unix" && s[j].net != "unix" {
+			return true
+		}
+	}
+
+	return s[i].dist < s[j].dist
+}
+
+func (s serviceList) Swap(i, j int) { s[i], s[j] = s[j], s[i] }
 
 func addSvc(list []*Service, s *Service) []*Service {
 	if len(list) == 0 {

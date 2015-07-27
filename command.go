@@ -77,6 +77,8 @@ const (
 	// command
 	cmdPing
 
+	// sync service addresses
+	// between client and server
 	cmdListLinks
 
 	// a command >= _maxcommand

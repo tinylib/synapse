@@ -29,6 +29,9 @@ func TestNearest(t *testing.T) {
 	if svc == nil {
 		t.Error("expected Nearest(test-endpoint) to return something")
 	}
+	if nwk, _ := svc.Addr(); nwk != "unix" {
+		t.Error("expected nearest endpoint to be a unix socket")
+	}
 
 	all := Services("test-endpoint")
 	for _, s := range all {

@@ -38,7 +38,6 @@ func TestWaiterMap(t *testing.T) {
 		t.Errorf("expected map to have 0 elements; found %d", l)
 	}
 
-	vals[200].done.Lock()
 	mp.insert(&vals[200])
 
 	mp.flush(nil)
@@ -48,7 +47,6 @@ func TestWaiterMap(t *testing.T) {
 	}
 
 	for i := range vals {
-		vals[i].done.Lock()
 		mp.insert(&vals[i])
 	}
 
@@ -72,7 +70,6 @@ func TestWaiterMap(t *testing.T) {
 	}
 
 	for i := range vals {
-		vals[i].done.Lock()
 		vals[i].reap = false
 		mp.insert(&vals[i])
 	}

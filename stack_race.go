@@ -18,7 +18,6 @@ type connStack struct{}
 func (ws waitStack) push(_ *waiter) {}
 func (ws waitStack) pop(c *Client) *waiter {
 	w := &waiter{parent: c}
-	w.done.Lock()
 	return w
 }
 

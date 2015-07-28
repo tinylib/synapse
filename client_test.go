@@ -117,7 +117,7 @@ func BenchmarkUnixNoop(b *testing.B) {
 		time.Sleep(1 * time.Millisecond)
 	}()
 	go Serve(l, NopHandler{})
-	cl, err := Dial("unix", "bench", 1*time.Millisecond)
+	cl, err := Dial("unix", "bench", 50*time.Millisecond)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -144,7 +144,7 @@ func BenchmarkPipeNoop(b *testing.B) {
 
 	defer srv.Close()
 
-	cl, err := NewClient(cln, 1*time.Millisecond)
+	cl, err := NewClient(cln, 50*time.Millisecond)
 	if err != nil {
 		b.Fatal(err)
 	}

@@ -150,9 +150,12 @@ func isRoutable(s *Service) bool {
 	switch s.net {
 	case "tcp", "tcp6", "tcp4":
 		a, err := net.ResolveTCPAddr(s.net, s.addr)
-
+		if err != nil {
+			errorf("couldn't resolve tcp addr %s: %s", s.addr, err)
+			return false
+		}
 		// TODO: link-local addresses
-		return err == nil && a.IP.IsGlobalUnicast()
+		return a.IP.IsGlobalUnicast()
 	default:
 		return false
 	}

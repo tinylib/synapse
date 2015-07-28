@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"os/signal"
@@ -42,6 +43,10 @@ func (e echoHandler) ServeCall(req synapse.Request, res synapse.ResponseWriter) 
 	for _, s := range sv {
 		fmt.Println("serrver: known service:", s)
 	}
+}
+
+func init() {
+	synapse.ErrorLogger = log.New(os.Stderr, "syn-server-log: ", log.LstdFlags)
 }
 
 func main() {

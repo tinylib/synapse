@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -40,6 +41,27 @@ var (
 	// size is larger than 65,535 bytes.
 	ErrTooLarge = errors.New("synapse: message body too large")
 )
+
+// ErrorLogger is the logger used
+// by the package to log protocol
+// errors. (In general, protocol-level
+// errors are not returned directly
+// to the client.) It can be set during
+// initialization. If it is left
+// as nil, nothing will be logged.
+var ErrorLogger *log.Logger
+
+func errorln(s string) {
+	if ErrorLogger != nil {
+		ErrorLogger.Println(s)
+	}
+}
+
+func errorf(s string, args ...interface{}) {
+	if ErrorLogger != nil {
+		ErrorLogger.Printf(s, args...)
+	}
+}
 
 // Dial creates a new client by dialing
 // the provided network and remote address.
@@ -200,6 +222,7 @@ func (c *Client) readLoop() {
 		// they are routed to waiters
 		// precisely the same way
 		if frame != fCMD && frame != fRES {
+			errorf("server at addr %s sent a bad frame", c.conn.RemoteAddr())
 			// ignore
 			if !c.do(bwr.Skip(sz)) {
 				return
@@ -459,5 +482,8 @@ func (c *Client) ping() error {
 
 // sync known service addresses
 func (c *Client) syncLinks() {
-	c.sendCommand(cmdListLinks, svclistbytes())
+	err := c.sendCommand(cmdListLinks, svclistbytes())
+	if err != nil {
+		errorf("error synchronizing links: %s", err)
+	}
 }

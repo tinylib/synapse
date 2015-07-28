@@ -94,7 +94,7 @@ func ServeConn(c net.Conn, service string, h Handler) {
 		h:       h,
 		remote:  c.RemoteAddr(),
 		writing: make(chan *connWrapper, 32),
-		route:   getRoute(c),
+		route:   getRoute(c.RemoteAddr()),
 	}
 	go ch.writeLoop()
 	ch.connLoop()     // returns on connection close
@@ -140,14 +140,13 @@ const (
 	routeOSLocal                // same machine (unix socket / loopback)
 )
 
-func getRoute(c net.Conn) route {
-	raddr := c.RemoteAddr()
+func getRoute(raddr net.Addr) route {
 	nwk := raddr.Network()
 	switch nwk {
 	case "unix":
 		return routeOSLocal
 	case "tcp", "tcp4", "tcp6":
-		a, err := net.ResolveIPAddr(nwk, raddr.String())
+		a, err := net.ResolveTCPAddr(nwk, raddr.String())
 		if err != nil {
 			return routeUnknown
 		}

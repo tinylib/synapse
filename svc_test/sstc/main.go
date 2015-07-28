@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"log"
 	"os"
 	"time"
 
@@ -36,6 +37,10 @@ func dumpservices(srv string) {
 	}
 }
 
+func init() {
+	synapse.ErrorLogger = log.New(os.Stderr, "syn-client-log: ", log.LstdFlags)
+}
+
 func main() {
 	cl, err := synapse.Dial("tcp", *port, 25*time.Millisecond)
 	if err != nil {
@@ -43,7 +48,7 @@ func main() {
 	}
 	fmt.Println("client: connected to service", cl.Service())
 
-	err = cl.Call("echo", synapse.String("hello!"), nil)
+	err = cl.Call(0, synapse.String("hello!"), nil)
 	if err != nil {
 		perror("client: call error:", err)
 	}
@@ -70,6 +75,10 @@ func main() {
 	if err != nil {
 		perror("client: couldn't dial socket:", err)
 	}
+	// give the second client time
+	// to complete another round of
+	// list synchronization.
+	time.Sleep(50 * time.Millisecond)
 	err = cl2.Close()
 	if err != nil {
 		perror("client: close error:", err)

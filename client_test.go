@@ -16,6 +16,7 @@ func isCode(err error, c Status) bool {
 }
 
 func TestClientServiceName(t *testing.T) {
+	setTestLog(t)
 	if tcpClient.Service() != "test-endpoint" {
 		t.Errorf("expected service endpoint to be %q, but got %q", "test-endpoint", tcpClient.Service())
 	}
@@ -25,6 +26,7 @@ func TestClientServiceName(t *testing.T) {
 }
 
 func TestNearest(t *testing.T) {
+	setTestLog(t)
 	svc := Nearest("test-endpoint")
 	if svc == nil {
 		t.Error("expected Nearest(test-endpoint) to return something")
@@ -51,6 +53,7 @@ func TestNearest(t *testing.T) {
 // open up a client and server; make
 // some concurrent requests
 func TestClient(t *testing.T) {
+	setTestLog(t)
 
 	const concurrent = 5
 	wg := new(sync.WaitGroup)
@@ -83,6 +86,7 @@ func TestClient(t *testing.T) {
 // the output of the debug handler
 // is only visible if '-v' is set
 func TestDebugClient(t *testing.T) {
+	setTestLog(t)
 	instr := String("here's a message body!")
 	var outstr String
 	err := tcpClient.Call(DebugEcho, &instr, &outstr)
@@ -97,6 +101,7 @@ func TestDebugClient(t *testing.T) {
 // test that 'nil' is a safe
 // argument to requests and responses
 func TestNop(t *testing.T) {
+	setTestLog(t)
 	err := tcpClient.Call(Nop, nil, nil)
 	if err != nil {
 		t.Fatal(err)

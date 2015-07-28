@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -30,7 +31,31 @@ var (
 	rt *RouteTable
 
 	ct testing.T
+
+	loglock sync.Mutex
 )
+
+type faillog struct {
+	t *testing.T
+}
+
+func (f *faillog) Write(b []byte) (int, error) {
+	loglock.Lock()
+	f.t.Error("error logged")
+	i, err := os.Stderr.Write(b)
+	loglock.Unlock()
+	return i, err
+}
+
+func fail(t *testing.T) io.Writer {
+	return &faillog{t}
+}
+
+func setTestLog(t *testing.T) {
+	loglock.Lock()
+	ErrorLogger = log.New(fail(t), "synapse-error-log: ", log.LstdFlags)
+	loglock.Unlock()
+}
 
 type testData []byte
 

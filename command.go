@@ -88,12 +88,13 @@ const (
 
 // client-side ping finalizer
 func recvping(cl *Client, res []byte) {
+	r := cl.conn.RemoteAddr()
 	var s Service
 	_, err := s.UnmarshalMsg(res)
 	if err != nil {
+		errorf("server at addr %s sent a malformed ping response", r)
 		return
 	}
-	r := cl.conn.RemoteAddr()
 	s.net = r.Network()
 	s.addr = r.String()
 	cache(&s)
@@ -113,6 +114,7 @@ func recvlinks(cl *Client, res []byte) {
 	sl := serviceTable{}
 	_, err := sl.UnmarshalMsg(res)
 	if err != nil {
+		errorf("server at addr %s sent malformed links: %s", cl.conn.RemoteAddr(), err)
 		return
 	}
 	svcCache.Lock()

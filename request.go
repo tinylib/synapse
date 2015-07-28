@@ -5,13 +5,15 @@ import (
 	"net"
 )
 
+type Method uint32
+
 // Request is the interface that
 // Handlers use to interact with
 // requests.
 type Request interface {
-	// Name returns the name of
-	// the requested method.
-	Name() string
+	// Method returns the
+	// request method.
+	Method() Method
 
 	// RemoteAddr returns the remote
 	// address that made the request.
@@ -30,11 +32,11 @@ type Request interface {
 // to the root handler of the server.
 type request struct {
 	addr net.Addr // remote address
-	name string   // method name
 	in   []byte   // body
+	mtd  uint32   // method
 }
 
-func (r *request) Name() string         { return r.name }
+func (r *request) Method() Method       { return Method(r.mtd) }
 func (r *request) RemoteAddr() net.Addr { return r.addr }
 
 func (r *request) Decode(m msgp.Unmarshaler) error {

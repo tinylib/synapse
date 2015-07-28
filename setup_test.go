@@ -3,6 +3,7 @@ package synapse
 import (
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"os"
 	"testing"
@@ -26,16 +27,10 @@ var (
 	// only global so that we
 	// can attach handlers to it
 	// during tests
-	rt *Router
+	rt *RouteTable
 
 	ct testing.T
 )
-
-// attaches a debug(echo handler) at the named
-// route w/ the provided *testing.T
-func attachDebug(name string, t *testing.T) {
-	rt.Handle(name, DebugTest(EchoHandler{}, t))
-}
 
 type testData []byte
 
@@ -79,11 +74,23 @@ func finish(c io.Closer) {
 	time.Sleep(1 * time.Millisecond)
 }
 
+const (
+	Echo Method = iota
+	Nop
+	DebugEcho
+)
+
 func TestMain(m *testing.M) {
 
-	rt = NewRouter()
-	rt.Handle("echo", EchoHandler{})
-	rt.Handle("nop", NopHandler{})
+	RegisterName(Echo, "echo")
+	RegisterName(Nop, "nop")
+	RegisterName(DebugEcho, "debug-echo")
+
+	rt = &RouteTable{
+		Echo:      EchoHandler{},
+		Nop:       NopHandler{},
+		DebugEcho: Debug(EchoHandler{}, log.New(os.Stderr, "debug-echo :: ", log.LstdFlags)),
+	}
 
 	l, err := net.Listen("tcp", ":7070")
 	if err != nil {

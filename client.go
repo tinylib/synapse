@@ -317,7 +317,7 @@ func (w *waiter) writebody(seq uint64) {
 	p.writing <- w
 }
 
-func (w *waiter) write(method string, in msgp.Marshaler) error {
+func (w *waiter) write(method Method, in msgp.Marshaler) error {
 	w.parent.wg.Add(1)
 	if atomic.LoadUint32(&w.parent.state) == clientClosed {
 		return ErrClosed
@@ -334,7 +334,7 @@ func (w *waiter) write(method string, in msgp.Marshaler) error {
 	}
 
 	// write body
-	w.in = msgp.AppendString(w.in, method)
+	w.in = msgp.AppendUint32(w.in, uint32(method))
 	// handle nil body
 	if in != nil {
 		w.in, err = in.MarshalMsg(w.in)
@@ -376,7 +376,7 @@ func (w *waiter) read(out msgp.Unmarshaler) error {
 	return err
 }
 
-func (w *waiter) call(method string, in msgp.Marshaler, out msgp.Unmarshaler) error {
+func (w *waiter) call(method Method, in msgp.Marshaler, out msgp.Unmarshaler) error {
 	err := w.write(method, in)
 	if err != nil {
 		w.parent.wg.Done()
@@ -394,7 +394,7 @@ func (w *waiter) call(method string, in msgp.Marshaler, out msgp.Unmarshaler) er
 // Call sends a request to the server with 'in' as the body,
 // and then decodes the response into 'out'. Call is safe
 // to call from multiple goroutines simultaneously.
-func (c *Client) Call(method string, in msgp.Marshaler, out msgp.Unmarshaler) error {
+func (c *Client) Call(method Method, in msgp.Marshaler, out msgp.Unmarshaler) error {
 	w := waiters.pop(c)
 	err := w.call(method, in, out)
 	waiters.push(w)

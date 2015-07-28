@@ -7,6 +7,10 @@ import (
 	"time"
 )
 
+const (
+	Hello synapse.Method = 0
+)
+
 func main() {
 	// This sets up a TCP connection to
 	// localhost:7000 and attaches a client
@@ -28,7 +32,7 @@ func main() {
 	// provided for sending strings
 	// back and forth.
 	var res synapse.String
-	err = client.Call("hello", nil, &res)
+	err = client.Call(Hello, nil, &res)
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)

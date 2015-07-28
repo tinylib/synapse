@@ -10,8 +10,8 @@ import (
 	"github.com/tinylib/msgp/msgp"
 )
 
-func TestNumMarshalUnmarshal(t *testing.T) {
-	v := new(Num)
+func TestMarshalUnmarshalNum(t *testing.T) {
+	v := Num{}
 	bts, err := v.MarshalMsg(nil)
 	if err != nil {
 		t.Fatal(err)
@@ -33,8 +33,8 @@ func TestNumMarshalUnmarshal(t *testing.T) {
 	}
 }
 
-func BenchmarkNumMarshalMsg(b *testing.B) {
-	v := new(Num)
+func BenchmarkMarshalMsgNum(b *testing.B) {
+	v := Num{}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -42,8 +42,8 @@ func BenchmarkNumMarshalMsg(b *testing.B) {
 	}
 }
 
-func BenchmarkNumAppendMsg(b *testing.B) {
-	v := new(Num)
+func BenchmarkAppendMsgNum(b *testing.B) {
+	v := Num{}
 	bts := make([]byte, 0, v.Msgsize())
 	bts, _ = v.MarshalMsg(bts[0:0])
 	b.SetBytes(int64(len(bts)))
@@ -54,8 +54,8 @@ func BenchmarkNumAppendMsg(b *testing.B) {
 	}
 }
 
-func BenchmarkNumUnmarshal(b *testing.B) {
-	v := new(Num)
+func BenchmarkUnmarshalNum(b *testing.B) {
+	v := Num{}
 	bts, _ := v.MarshalMsg(nil)
 	b.ReportAllocs()
 	b.SetBytes(int64(len(bts)))

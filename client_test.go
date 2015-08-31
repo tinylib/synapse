@@ -15,9 +15,45 @@ func isCode(err error, c Status) bool {
 	return false
 }
 
+func TestClientServiceName(t *testing.T) {
+	setTestLog(t)
+	if tcpClient.Service() != "test-endpoint" {
+		t.Errorf("expected service endpoint to be %q, but got %q", "test-endpoint", tcpClient.Service())
+	}
+	if unxClient.Service() != "test-endpoint" {
+		t.Errorf("expected service endpoint to be %q, but got %q", "test-endpoint", unxClient.Service())
+	}
+}
+
+func TestNearest(t *testing.T) {
+	setTestLog(t)
+	svc := Nearest("test-endpoint")
+	if svc == nil {
+		t.Error("expected Nearest(test-endpoint) to return something")
+	}
+	if nwk, _ := svc.Addr(); nwk != "unix" {
+		t.Error("expected nearest endpoint to be a unix socket")
+	}
+
+	all := Services("test-endpoint")
+	for _, s := range all {
+		t.Logf("found service: %v", s)
+		if s.Name() != "test-endpoint" {
+			t.Errorf("expected name %q -- got %q", "test-endpoint", s.Name())
+		}
+		if s.HostID() != hostid {
+			t.Errorf("expected host id %d; got %d", hostid, s.HostID())
+		}
+	}
+	if len(all) < 2 {
+		t.Errorf("expected at least 2 services; found %d", len(all))
+	}
+}
+
 // open up a client and server; make
 // some concurrent requests
 func TestClient(t *testing.T) {
+	setTestLog(t)
 
 	const concurrent = 5
 	wg := new(sync.WaitGroup)
@@ -50,6 +86,7 @@ func TestClient(t *testing.T) {
 // the output of the debug handler
 // is only visible if '-v' is set
 func TestDebugClient(t *testing.T) {
+	setTestLog(t)
 	instr := String("here's a message body!")
 	var outstr String
 	err := tcpClient.Call(DebugEcho, &instr, &outstr)
@@ -64,6 +101,7 @@ func TestDebugClient(t *testing.T) {
 // test that 'nil' is a safe
 // argument to requests and responses
 func TestNop(t *testing.T) {
+	setTestLog(t)
 	err := tcpClient.Call(Nop, nil, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -81,7 +119,7 @@ func BenchmarkTCPEcho(b *testing.B) {
 		time.Sleep(1 * time.Millisecond)
 	}()
 
-	go Serve(l, EchoHandler{})
+	go Serve(l, "bench-endpoint", EchoHandler{})
 	cl, err := Dial("tcp", "localhost:7000", 50*time.Millisecond)
 	if err != nil {
 		b.Fatal(err)
@@ -116,8 +154,9 @@ func BenchmarkUnixNoop(b *testing.B) {
 		l.Close()
 		time.Sleep(1 * time.Millisecond)
 	}()
-	go Serve(l, NopHandler{})
-	cl, err := Dial("unix", "bench", 50*time.Millisecond)
+
+	go Serve(l, "bench-endpoint", NopHandler{})
+	cl, err := Dial("unix", "bench", 1*time.Millisecond)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -140,7 +179,7 @@ func BenchmarkUnixNoop(b *testing.B) {
 func BenchmarkPipeNoop(b *testing.B) {
 	srv, cln := net.Pipe()
 
-	go ServeConn(srv, NopHandler{})
+	go ServeConn(srv, "pipe", NopHandler{})
 
 	defer srv.Close()
 

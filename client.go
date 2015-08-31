@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -40,6 +41,27 @@ var (
 	// size is larger than 65,535 bytes.
 	ErrTooLarge = errors.New("synapse: message body too large")
 )
+
+// ErrorLogger is the logger used
+// by the package to log protocol
+// errors. (In general, protocol-level
+// errors are not returned directly
+// to the client.) It can be set during
+// initialization. If it is left
+// as nil, nothing will be logged.
+var ErrorLogger *log.Logger
+
+func errorln(s string) {
+	if ErrorLogger != nil {
+		ErrorLogger.Println(s)
+	}
+}
+
+func errorf(s string, args ...interface{}) {
+	if ErrorLogger != nil {
+		ErrorLogger.Printf(s, args...)
+	}
+}
 
 // Dial creates a new client by dialing
 // the provided network and remote address.
@@ -87,6 +109,8 @@ func NewClient(c net.Conn, timeout time.Duration) (*Client, error) {
 		cl.Close()
 		return nil, fmt.Errorf("synapse: ping failed: %s", err)
 	}
+	// sync links asap
+	go cl.syncLinks()
 
 	return cl, nil
 }
@@ -94,6 +118,7 @@ func NewClient(c net.Conn, timeout time.Duration) (*Client, error) {
 // Client is a client to
 // a single synapse server.
 type Client struct {
+	svc     string
 	conn    net.Conn       // connection
 	wlock   sync.Mutex     // write lock
 	csn     uint64         // sequence number; atomic
@@ -102,6 +127,10 @@ type Client struct {
 	wg      sync.WaitGroup // outstanding client procs
 	state   uint32         // open, closed, etc.
 	pending wMap           // map seq number to waiting handler
+}
+
+func (c *Client) Service() string {
+	return c.svc
 }
 
 // used to transfer control
@@ -193,6 +222,7 @@ func (c *Client) readLoop() {
 		// they are routed to waiters
 		// precisely the same way
 		if frame != fCMD && frame != fRES {
+			errorf("server at addr %s sent a bad frame", c.conn.RemoteAddr())
 			// ignore
 			if !c.do(bwr.Skip(sz)) {
 				return
@@ -435,16 +465,10 @@ func (c *Client) sendCommand(cmd command, msg []byte) error {
 
 	if ret == cmdInvalid || ret >= _maxcommand {
 		waiters.push(w)
-		return errInvalidCmd
-	}
-
-	act := cmdDirectory[ret]
-	if act == nil {
-		waiters.push(w)
 		return errUnknownCmd
 	}
 
-	act.Client(c, w.in[1:])
+	cmdDirectory[ret].done(c, w.in[1:])
 	waiters.push(w)
 	return nil
 }
@@ -454,4 +478,12 @@ func (c *Client) sendCommand(cmd command, msg []byte) error {
 // didn't respond appropriately
 func (c *Client) ping() error {
 	return c.sendCommand(cmdPing, nil)
+}
+
+// sync known service addresses
+func (c *Client) syncLinks() {
+	err := c.sendCommand(cmdListLinks, svclistbytes())
+	if err != nil {
+		errorf("error synchronizing links: %s", err)
+	}
 }
